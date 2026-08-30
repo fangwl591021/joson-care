@@ -7,6 +7,16 @@ workers_dev = true
 directory = "./public"
 binding = "ASSETS"
 
+[[d1_databases]]
+binding = "CRM_DB"
+database_name = "joson-care-crm"
+database_id = "a11d660e-5728-4673-9723-69507c519efe"
+migrations_dir = "./migrations"
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 [vars]
 LIFF_ID = "2011335134-ccbJ33yx"
 LINE_LOGIN_CHANNEL_ID = "2011335134"

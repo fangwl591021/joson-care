@@ -23,6 +23,7 @@ Do not commit secrets to GitHub.
 npx wrangler secret put LINE_CHANNEL_SECRET
 npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
 npx wrangler secret put LINE_LOGIN_CHANNEL_SECRET
+npx wrangler secret put ADMIN_ACCESS_KEY
 ```
 
 `LINE_CHANNEL_SECRET` and `LINE_CHANNEL_ACCESS_TOKEN` belong to the Messaging API channel.
@@ -39,6 +40,23 @@ npx wrangler secret put LINE_LOGIN_CHANNEL_SECRET
 - `GET /products` — local Traditional Chinese product catalog
 - `GET /products/:slug` — local product detail page
 - `GET /api/products` — structured product catalog API (`q` and `featured=1` filters supported)
+- `GET /admin` — protected CRM and Rich Menu draft dashboard
+- `GET /api/admin/summary` — protected CRM summary API
+- `GET /api/admin/contacts` — protected LINE contact list
+- `GET /api/admin/rich-menu/definition` — protected Rich Menu draft definition
+
+## CRM and Admin
+
+CRM data is stored in the `joson-care-crm` D1 database through the `CRM_DB` binding. LINE webhook replies remain on the critical path; contact, message, intent, recommendation and lead records are written with `ctx.waitUntil()` after the reply attempt.
+
+Run migrations locally before development and remotely only after reviewing the pending list:
+
+```powershell
+npx wrangler d1 migrations list joson-care-crm --remote
+npx wrangler d1 migrations apply joson-care-crm --remote
+```
+
+`/admin` stays unavailable until `ADMIN_ACCESS_KEY` is configured as a Worker Secret. The initial Rich Menu definition is a protected draft only; publishing or replacing the LINE default menu is a separate verified operation.
 
 ## Local product snapshot
 

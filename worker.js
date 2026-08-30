@@ -1,4 +1,5 @@
 import { CATALOG_GENERATED_AT, PRODUCTS } from "./data/products.js";
+import { handleAdminRequest, postbackToText, recordLineInteraction } from "./crm.js";
 
 const LIFF_ID = "2011335134-ccbJ33yx";
 const LINE_LOGIN_CHANNEL_ID = "2011335134";
@@ -19,15 +20,16 @@ const FEATURED_PRODUCT_COPY = Object.freeze({
 });
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
 
     if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
 
     try {
-      if (path === "/health") return json({ ok: true, service: "joson-care", version: "1.1.0", products: PRODUCTS.length });
-      if (path === "/line-webhook") return handleLineWebhook(request, env);
+      if (path === "/health") return json({ ok: true, service: "joson-care", version: "1.2.0", products: PRODUCTS.length, crm: Boolean(env.CRM_DB) });
+      if (path === "/admin" || path.startsWith("/admin/") || path.startsWith("/api/admin/")) return handleAdminRequest(request, env, url);
+      if (path === "/line-webhook") return handleLineWebhook(request, env, ctx);
       if (path === "/liff" || path === "/") return html(renderLiffPage(env));
       if (request.method === "GET" && path === "/products") return catalogHtml(renderProductsPage(url));
       if (request.method === "GET" && path.startsWith("/products/")) return handleProductPage(path);
@@ -43,12 +45,13 @@ export default {
   },
 };
 
-async function handleLineWebhook(request, env) {
+async function handleLineWebhook(request, env, ctx) {
   if (request.method === "GET") {
     return json({
       ok: true,
       endpoint: "/line-webhook",
       configured: Boolean(env.LINE_CHANNEL_SECRET && env.LINE_CHANNEL_ACCESS_TOKEN),
+      crm: Boolean(env.CRM_DB),
     });
   }
   if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
@@ -66,18 +69,29 @@ async function handleLineWebhook(request, env) {
   const events = Array.isArray(payload.events) ? payload.events : [];
 
   for (const event of events) {
+    let inputText = "";
+    let messages = [];
     try {
-      if (event.type === "follow" && event.replyToken) {
-        await replyLine(event.replyToken, [buildWelcomeMessage()], env.LINE_CHANNEL_ACCESS_TOKEN);
-        continue;
+      if (event.type === "follow") messages = [buildWelcomeMessage()];
+      if (event.type === "message" && event.message?.type === "text") {
+        inputText = event.message.text || "";
+        messages = routeTextMessage(inputText);
       }
-
-      if (event.type === "message" && event.message?.type === "text" && event.replyToken) {
-        const messages = routeTextMessage(event.message.text || "");
-        await replyLine(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
+      if (event.type === "postback") {
+        inputText = postbackToText(event.postback?.data);
+        messages = routeTextMessage(inputText);
       }
+      if (event.replyToken && messages.length) await replyLine(event.replyToken, messages, env.LINE_CHANNEL_ACCESS_TOKEN);
     } catch (eventError) {
-      console.error("LINE event failed", eventError);
+      console.error(JSON.stringify({ level: "error", message: "LINE event failed", eventType: event.type, error: eventError?.message || String(eventError) }));
+    } finally {
+      if (env.CRM_DB) {
+        const recordPromise = recordLineInteraction(env, event, inputText, messages).catch((crmError) => {
+          console.error(JSON.stringify({ level: "error", message: "CRM record failed", eventType: event.type, error: crmError?.message || String(crmError) }));
+        });
+        if (ctx?.waitUntil) ctx.waitUntil(recordPromise);
+        else await recordPromise;
+      }
     }
   }
 
