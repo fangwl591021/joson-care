@@ -1,5 +1,22 @@
+import { CATALOG_GENERATED_AT, PRODUCTS } from "./data/products.js";
+
 const LIFF_ID = "2011335134-ccbJ33yx";
 const LINE_LOGIN_CHANNEL_ID = "2011335134";
+const WORKER_ORIGIN = "https://joson-care.fangwl591021.workers.dev";
+const FEATURED_PRODUCT_COPY = Object.freeze({
+  "ES-18UDS": {
+    reasons: ["適合一般居家使用", "最低床面約 23.5cm", "適合重視低床設計的家庭", "木質外觀較符合居家環境"],
+  },
+  "EN-3M": {
+    reasons: ["可折疊", "易收納", "易移動", "適合空間有限的居家環境"],
+  },
+  "ES-05HDS": {
+    reasons: ["四片式護欄", "雙側操作控制", "適合重視完整防護與操作便利的家庭"],
+  },
+  "ES-12DF": {
+    reasons: ["四片護欄", "床尾控制", "角度顯示", "較完整的專業照護功能"],
+  },
+});
 
 export default {
   async fetch(request, env) {
@@ -9,9 +26,12 @@ export default {
     if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
 
     try {
-      if (path === "/health") return json({ ok: true, service: "joson-care", version: "1.0.0" });
+      if (path === "/health") return json({ ok: true, service: "joson-care", version: "1.1.0", products: PRODUCTS.length });
       if (path === "/line-webhook") return handleLineWebhook(request, env);
       if (path === "/liff" || path === "/") return html(renderLiffPage(env));
+      if (request.method === "GET" && path === "/products") return catalogHtml(renderProductsPage(url));
+      if (request.method === "GET" && path.startsWith("/products/")) return handleProductPage(path);
+      if (request.method === "GET" && path === "/api/products") return handleProductsApi(url);
       if (path === "/login") return startLineLogin(request, env);
       if (path === "/callback") return handleLineLoginCallback(request, env);
       if (path === "/api/config") return json({ liffId: env.LIFF_ID || LIFF_ID, lineLoginChannelId: env.LINE_LOGIN_CHANNEL_ID || LINE_LOGIN_CHANNEL_ID });
@@ -77,7 +97,7 @@ function routeTextMessage(input) {
       productRecommendation(
         "ES-18UDS 超低型電動床",
         ["適合一般居家使用", "最低床面約 23.5cm", "適合重視低床設計的家庭", "木質外觀較符合居家環境"],
-        "https://www.joson-care.com/product_d.php?id=30&lang=tw&tb=1",
+        `${WORKER_ORIGIN}/products/es-18uds`,
         ["超低床", "居家照護", "木質外觀"]
       ),
     ];
@@ -88,7 +108,7 @@ function routeTextMessage(input) {
       productRecommendation(
         "EN-3M 折疊型電動照護床",
         ["可折疊", "易收納", "易移動", "適合空間有限的居家環境"],
-        "https://www.joson-care.com/product_d.php?id=12&lang=tw&tb=1",
+        `${WORKER_ORIGIN}/products/en-3m`,
         ["可折疊", "居家使用", "移動收納"]
       ),
     ];
@@ -99,7 +119,7 @@ function routeTextMessage(input) {
       productRecommendation(
         "ES-05HDS 旗艦型電動床",
         ["四片式護欄", "雙側操作控制", "適合重視完整防護與操作便利的家庭"],
-        "https://www.joson-care.com/product_d.php?id=40&lang=tw&tb=1",
+        `${WORKER_ORIGIN}/products/es-05hds`,
         ["四片護欄", "雙側控制", "居家照護"]
       ),
     ];
@@ -110,7 +130,7 @@ function routeTextMessage(input) {
       productRecommendation(
         "ES-12DF 尊爵型電動床",
         ["四片護欄", "床尾控制", "角度顯示", "較完整的專業照護功能"],
-        "https://www.joson-care.com/product_d.php?id=2&lang=tw&tb=1",
+        `${WORKER_ORIGIN}/products/es-12df`,
         ["床尾控制", "角度顯示", "四片護欄"]
       ),
     ];
@@ -136,7 +156,7 @@ function routeTextMessage(input) {
           title: "Joson 醫療床系列",
           text: "院所與機構規格仍需由專責業務依場域與數量評估。",
           actions: [
-            { type: "uri", label: "查看醫療床系列", uri: "https://www.joson-care.com/product.php?lang=tw" },
+            { type: "uri", label: "查看醫療床系列", uri: `${WORKER_ORIGIN}/products` },
             { type: "message", label: "聯絡專人", text: "請專人聯絡" },
           ],
         },
@@ -202,7 +222,7 @@ function routeTextMessage(input) {
           title: "Joson-Care 居家照護床",
           text: "先看產品也可以；如果不知道怎麼選，建議讓 AI 先問 3～5 個生活情境問題。",
           actions: [
-            { type: "uri", label: "官方居家照護床", uri: "https://www.joson-care.com/product.php?lang=tw&tb=1" },
+            { type: "uri", label: "快速產品目錄", uri: `${WORKER_ORIGIN}/products?featured=1` },
             { type: "message", label: "AI 幫我選床", text: "AI選床" },
           ],
         },
@@ -304,6 +324,160 @@ function productRecommendation(title, reasons, url, tags) {
       },
     },
   };
+}
+
+function handleProductsApi(url) {
+  const query = String(url.searchParams.get("q") || "").trim().toLocaleLowerCase("zh-Hant");
+  const featuredOnly = url.searchParams.get("featured") === "1";
+  const products = filterProducts(query, featuredOnly).map((product) => ({
+    id: product.id,
+    slug: product.slug,
+    model: product.model,
+    name: product.name,
+    subtitle: product.subtitle,
+    category: product.category,
+    summary: safeCatalogText(product.summary),
+    highlights: productHighlights(product),
+    specs: product.specs,
+    image: product.featured ? `/assets/products/${product.slug}.jpg` : null,
+    sourceImageUrl: product.imageUrl,
+    sourceUrl: product.sourceUrl,
+    featured: product.featured,
+    unavailable: product.unavailable,
+  }));
+
+  return json({
+    ok: true,
+    generatedAt: CATALOG_GENERATED_AT,
+    total: products.length,
+    catalogTotal: PRODUCTS.length,
+    products,
+  }, 200, { "cache-control": "public, max-age=300" });
+}
+
+function handleProductPage(path) {
+  let slug;
+  try {
+    slug = decodeURIComponent(path.slice("/products/".length)).toLocaleLowerCase("en-US");
+  } catch {
+    return html(simplePage("產品網址錯誤", "產品網址格式不正確。"), 400);
+  }
+  const product = PRODUCTS.find((item) => item.slug.toLocaleLowerCase("en-US") === slug);
+  if (!product) return html(simplePage("找不到產品", "這個產品不存在或尚未收錄。"), 404);
+  return catalogHtml(renderProductPage(product));
+}
+
+function filterProducts(query, featuredOnly) {
+  return PRODUCTS.filter((product) => {
+    if (featuredOnly && !product.featured) return false;
+    if (!query) return true;
+    const searchText = [product.model, product.name, product.subtitle, product.category]
+      .join(" ")
+      .toLocaleLowerCase("zh-Hant");
+    return searchText.includes(query);
+  });
+}
+
+function productHighlights(product) {
+  const curated = FEATURED_PRODUCT_COPY[product.model]?.reasons;
+  if (product.featured && curated) return curated;
+  return product.highlights.slice(0, 12).map(safeCatalogText).filter(Boolean);
+}
+
+function safeCatalogText(value) {
+  return String(value || "")
+    .replace(/(?:防止|預防)跌倒/g, "著重上下床與床邊使用情境")
+    .replace(/降低跌落(?:受傷)?風險/g, "著重低床使用情境")
+    .replace(/(?:可以|可)治療/g, "可供照護使用比較")
+    .replace(/最適合[^，。；;]*/g, "可優先比較")
+    .trim();
+}
+
+function renderProductsPage(url) {
+  const query = String(url.searchParams.get("q") || "").trim();
+  const featuredOnly = url.searchParams.get("featured") === "1";
+  const products = filterProducts(query.toLocaleLowerCase("zh-Hant"), featuredOnly);
+  const cards = products.map((product) => {
+    const image = product.featured
+      ? `<img src="/assets/products/${escapeHtml(product.slug)}.jpg" alt="${escapeHtml(product.model || product.name)}" loading="lazy">`
+      : `<div class="placeholder">${escapeHtml((product.model || "J").slice(0, 12))}</div>`;
+    const status = product.unavailable ? `<span class="status-tag">官網資料未完整</span>` : "";
+    return `<a class="product-card" href="/products/${encodeURIComponent(product.slug)}">
+      <div class="product-image">${image}</div>
+      <div class="product-copy">
+        <div class="model">${escapeHtml(product.model || `產品 ${product.id}`)} ${status}</div>
+        <h2>${escapeHtml(product.name)}</h2>
+        <p>${escapeHtml(product.category || "產品介紹")}</p>
+      </div>
+    </a>`;
+  }).join("");
+
+  return renderCatalogShell("Joson 快速產品目錄", `<header class="catalog-hero">
+      <a class="back-link" href="/liff">← 智慧照護顧問</a>
+      <div class="eyebrow">LOCAL PRODUCT CATALOG</div>
+      <h1>Joson 快速產品目錄</h1>
+      <p>產品資料已收錄於 Joson-Care Worker，不必等待原官網載入。第一版四款居家照護床的圖片也由 Cloudflare 直接提供。</p>
+    </header>
+    <section class="catalog-tools">
+      <form action="/products" method="get">
+        <input type="search" name="q" value="${escapeHtml(query)}" placeholder="搜尋型號或產品名稱" aria-label="搜尋產品">
+        <button type="submit">搜尋</button>
+      </form>
+      <nav><a href="/products?featured=1">四款居家推薦</a><a href="/products">全部產品</a></nav>
+      <p class="count">顯示 ${products.length}／${PRODUCTS.length} 筆；資料快照 ${escapeHtml(CATALOG_GENERATED_AT.slice(0, 10))}</p>
+    </section>
+    <section class="product-grid">${cards || `<div class="empty">找不到符合條件的產品。</div>`}</section>`);
+}
+
+function renderProductPage(product) {
+  const highlights = productHighlights(product);
+  const image = product.featured
+    ? `<img class="detail-image" src="/assets/products/${escapeHtml(product.slug)}.jpg" alt="${escapeHtml(product.model || product.name)}">`
+    : `<div class="detail-placeholder">${escapeHtml(product.model || `產品 ${product.id}`)}</div>`;
+  const summary = safeCatalogText(product.summary);
+  const highlightList = highlights.length
+    ? `<ul>${highlights.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+    : `<p>官網目前未提供可整理的特色文字。</p>`;
+  const specs = product.specs.length
+    ? `<dl class="spec-list">${product.specs.map(({ label, value }) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>`
+    : `<p>官網目前未提供結構化規格。</p>`;
+
+  return renderCatalogShell(`${product.model || product.name}｜Joson`, `<header class="detail-header">
+      <a class="back-link" href="/products">← 返回快速產品目錄</a>
+      <div class="eyebrow">JOSON PRODUCT SNAPSHOT</div>
+      <div class="detail-grid">
+        <div>${image}</div>
+        <div>
+          <div class="model">${escapeHtml(product.model || `產品 ${product.id}`)}</div>
+          <h1>${escapeHtml(product.name)}</h1>
+          ${product.subtitle ? `<p class="subtitle">${escapeHtml(product.subtitle)}</p>` : ""}
+          <span class="category">${escapeHtml(product.category || "產品介紹")}</span>
+        </div>
+      </div>
+    </header>
+    <main class="detail-content">
+      ${summary ? `<section><h2>產品摘要</h2><p>${escapeHtml(summary)}</p></section>` : ""}
+      <section><h2>特色</h2>${highlightList}</section>
+      <section><h2>規格</h2>${specs}</section>
+      <section class="notice"><h2>使用提醒</h2><p>本頁提供產品資訊與選型比較，不進行疾病診斷、不宣稱治療效果，也不取代醫師、護理師或其他醫療專業人員的判斷。</p></section>
+      <p class="source"><a href="${escapeHtml(product.sourceUrl)}" rel="noopener noreferrer">查看原始官網資料</a></p>
+    </main>`);
+}
+
+function renderCatalogShell(title, content) {
+  return `<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#163f37">
+  <title>${escapeHtml(title)}</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f4f7f6;color:#17332e;font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif}a{color:inherit}.catalog-hero,.detail-header{padding:26px max(18px,calc((100vw - 1080px)/2));background:#163f37;color:#fff}.back-link{display:inline-block;margin-bottom:18px;color:#d7ebe5;text-decoration:none}.eyebrow{font-size:12px;letter-spacing:.14em;opacity:.76}.catalog-hero h1,.detail-header h1{margin:8px 0 10px;font-size:clamp(28px,6vw,42px);line-height:1.18}.catalog-hero p{max-width:720px;margin:0;color:#d7ebe5;line-height:1.7}.catalog-tools{max-width:1080px;margin:0 auto;padding:18px}.catalog-tools form{display:flex;gap:8px}.catalog-tools input{width:100%;min-height:48px;border:1px solid #cddbd7;border-radius:12px;padding:0 14px;font-size:16px}.catalog-tools button{border:0;border-radius:12px;padding:0 20px;background:#1b6b55;color:#fff;font-weight:800}.catalog-tools nav{display:flex;gap:10px;margin-top:12px}.catalog-tools nav a{padding:9px 12px;border-radius:999px;background:#e4efec;text-decoration:none;font-size:14px;font-weight:700}.count{color:#647a74;font-size:13px}.product-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;max-width:1080px;margin:0 auto;padding:0 18px 48px}.product-card{overflow:hidden;border:1px solid #dce6e3;border-radius:16px;background:#fff;text-decoration:none;box-shadow:0 8px 26px rgba(19,61,53,.06)}.product-image{display:grid;place-items:center;aspect-ratio:16/9;background:#eaf1ef;overflow:hidden}.product-image img{width:100%;height:100%;object-fit:contain;background:#fff}.placeholder,.detail-placeholder{display:grid;place-items:center;width:100%;height:100%;min-height:180px;background:#e7f0ed;color:#1b6b55;font-size:20px;font-weight:900}.product-copy{padding:16px}.model{color:#1b6b55;font-size:13px;font-weight:900;letter-spacing:.04em}.product-copy h2{margin:7px 0;font-size:18px;line-height:1.4}.product-copy p{margin:0;color:#647a74}.status-tag{margin-left:4px;color:#9a5a13;font-weight:700}.empty{grid-column:1/-1;padding:32px;border-radius:16px;background:#fff;text-align:center}.detail-grid{display:grid;grid-template-columns:minmax(240px,460px) 1fr;gap:26px;align-items:center;max-width:1080px;margin:auto}.detail-image{display:block;width:100%;border-radius:18px;background:#fff}.subtitle{color:#d7ebe5;line-height:1.6}.category{display:inline-block;padding:7px 10px;border-radius:999px;background:#28594f;font-size:13px}.detail-content{max-width:900px;margin:auto;padding:24px 18px 56px}.detail-content section{margin-bottom:16px;padding:20px;border:1px solid #dce6e3;border-radius:16px;background:#fff}.detail-content h2{margin:0 0 12px;font-size:20px}.detail-content p,.detail-content li{line-height:1.75}.detail-content ul{margin:0;padding-left:22px}.spec-list{margin:0}.spec-list div{display:grid;grid-template-columns:minmax(120px,1fr) 2fr;border-top:1px solid #e4ebe9}.spec-list div:first-child{border-top:0}.spec-list dt,.spec-list dd{margin:0;padding:12px}.spec-list dt{font-weight:800}.notice{background:#eef5f3!important}.source{text-align:center}.source a{color:#1b6b55;font-weight:800}@media(max-width:680px){.detail-grid{grid-template-columns:1fr}.catalog-tools form{align-items:stretch}.catalog-tools button{padding:0 14px}.spec-list div{grid-template-columns:1fr}.spec-list dd{padding-top:0}}
+  </style>
+</head>
+<body>${content}</body>
+</html>`;
 }
 
 function textMessage(text) {
@@ -512,10 +686,12 @@ function escapeHtml(value) {
   return String(value || "").replace(/[&<>\"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 }
 
-function json(data, status = 200) {
+function json(data, status = 200, extraHeaders = {}) {
+  const headers = new Headers({ "content-type": "application/json; charset=utf-8" });
+  for (const [name, value] of Object.entries(extraHeaders)) headers.set(name, value);
   return cors(new Response(JSON.stringify(data), {
     status,
-    headers: { "content-type": "application/json; charset=utf-8" },
+    headers,
   }));
 }
 
@@ -523,6 +699,16 @@ function html(body, status = 200) {
   return cors(new Response(body, {
     status,
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+  }));
+}
+
+function catalogHtml(body) {
+  return cors(new Response(body, {
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "public, max-age=300",
+    },
   }));
 }
 

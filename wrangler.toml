@@ -3,6 +3,10 @@ main = "worker.js"
 compatibility_date = "2026-08-30"
 workers_dev = true
 
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
 [vars]
 LIFF_ID = "2011335134-ccbJ33yx"
 LINE_LOGIN_CHANNEL_ID = "2011335134"

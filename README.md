@@ -36,6 +36,21 @@ npx wrangler secret put LINE_LOGIN_CHANNEL_SECRET
 - `GET /callback` — LINE Login callback
 - `GET /health` — Worker health endpoint
 - `GET /api/config` — non-secret LIFF / LINE Login IDs
+- `GET /products` — local Traditional Chinese product catalog
+- `GET /products/:slug` — local product detail page
+- `GET /api/products` — structured product catalog API (`q` and `featured=1` filters supported)
+
+## Local product snapshot
+
+The Worker contains a structured snapshot of the 85 Traditional Chinese product pages listed in the official sitemap. The four first-version home-care recommendations also include locally hosted product images under `public/assets/products/`, so LINE users do not need to wait for the original website.
+
+Refresh the snapshot deliberately after reviewing changes to the official sitemap:
+
+```powershell
+node scripts/sync-products.mjs
+```
+
+The sync fails closed if the sitemap product count changes from 85, so a catalog expansion or removal must be reviewed before deployment. Original source URLs remain in the snapshot for auditing; LINE recommendations continue to use curated, non-diagnostic wording.
 
 ## First version conversation
 
