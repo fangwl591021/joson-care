@@ -13,6 +13,10 @@ database_name = "joson-care-crm"
 database_id = "a11d660e-5728-4673-9723-69507c519efe"
 migrations_dir = "./migrations"
 
+[[r2_buckets]]
+binding = "RICH_MENU_ASSETS"
+bucket_name = "joson-care-rich-menu-assets"
+
 [observability]
 enabled = true
 head_sampling_rate = 1

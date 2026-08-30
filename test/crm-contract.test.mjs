@@ -70,9 +70,25 @@ test("Rich Menu Studio validates editable draft definitions", () => {
 
 test("Rich Menu Studio exposes template, project, draft and version modules", () => {
   const source = fs.readFileSync(new URL("../crm.js", import.meta.url), "utf8");
+  const studio = fs.readFileSync(new URL("../public/admin-rich-menu-studio.js", import.meta.url), "utf8");
+  const combined = `${source}\n${studio}`;
   assert.match(source, /\/api\/admin\/rich-menu\/studio/);
   assert.match(source, /rich_menu_project_drafts/);
-  for (const label of ["圖文選單模板", "圖文選單專案", "內容設定", "熱區動作", "版本紀錄", "上架紀錄"]) {
-    assert.match(source, new RegExp(label));
+  for (const route of ["projects/from-template", "upload-image", "set-default", "templates"] ) {
+    assert.match(source, new RegExp(route));
   }
+  for (const label of ["模板中心", "圖文選單專案", "內容設定", "切換頁", "版本紀錄", "上架紀錄", "發布圖文選單"]) {
+    assert.match(combined, new RegExp(label));
+  }
+});
+
+test("full Studio stores uploaded images in R2 and preserves a safe publish workflow", () => {
+  const source = fs.readFileSync(new URL("../crm.js", import.meta.url), "utf8");
+  const config = fs.readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8");
+  assert.match(config, /RICH_MENU_ASSETS/);
+  assert.match(source, /RICH_MENU_ASSETS\.put/);
+  assert.match(source, /upsertRichMenuAlias/);
+  assert.match(source, /verifyDefaultRichMenu/);
+  assert.match(source, /cleanupOldRichMenu/);
+  assert.ok(source.indexOf("verifyDefaultRichMenu") < source.indexOf("cleanupOldRichMenu"));
 });

@@ -56,7 +56,15 @@ npx wrangler secret put ADMIN_ACCESS_KEY
 - `GET /api/admin/system/status` — protected non-secret system configuration status
 - `GET /api/admin/rich-menu/definition` — protected Rich Menu draft definition
 - `GET /api/admin/rich-menu/studio` — protected template, project, editable draft, version and publish-run workspace data
+- `GET|POST /api/admin/rich-menu/templates` — list or create reusable Rich Menu templates
+- `GET|PATCH|DELETE /api/admin/rich-menu/templates/:id` — inspect, update or archive a template
+- `POST /api/admin/rich-menu/projects/from-template` — create an independent project snapshot from a template
+- `GET /api/admin/rich-menu/projects/:id` — load one project, its editable definition and switch targets
 - `PATCH /api/admin/rich-menu/projects/:id/draft` — validate and save Rich Menu names, tappable bounds and actions without publishing
+- `POST /api/admin/rich-menu/projects/:id/upload-image` — validate and store a project PNG/JPEG in R2
+- `POST /api/admin/rich-menu/projects/:id/toggle` — enable or disable a non-default project and its Alias
+- `POST /api/admin/rich-menu/projects/:id/set-default` — switch an already-published project to the LINE default
+- `POST /api/admin/rich-menu/projects/:id/publish` — create, upload, alias, activate and verify a new LINE version
 
 ## CRM and Admin
 
@@ -71,7 +79,7 @@ npx wrangler d1 migrations list joson-care-crm --remote
 npx wrangler d1 migrations apply joson-care-crm --remote
 ```
 
-`/admin` stays unavailable until `ADMIN_ACCESS_KEY` is configured as a Worker Secret. Rich Menu templates, projects, editable drafts, versions and publish runs are stored in D1. The Rich Menu Studio follows the template → project → content/action editor → publish/version workflow. Draft saves validate LINE dimensions, bounds, overlap and action fields but never publish automatically. The Joson default project keeps its custom asymmetric layout with a large smart-advisor entry, four real product images and a service rail instead of a stock six-grid template.
+`/admin` stays unavailable until `ADMIN_ACCESS_KEY` is configured as a Worker Secret. Rich Menu templates, projects, editable drafts, versions and publish runs are stored in D1; uploaded template and project images use the private `RICH_MENU_ASSETS` R2 binding. The Rich Menu Studio mirrors the Smart-Menu-Studio workflow with separate project list, project builder, template center, template editor, project content editor, LINE phone preview, URI/message/postback/page-switch actions, enable/disable controls, default-page switching, publish confirmation and history. Draft saves validate LINE dimensions, bounds, overlap and action fields but never publish automatically. The Joson default project keeps its custom asymmetric layout with a large smart-advisor entry, four real product images and a service rail instead of a stock six-grid template.
 
 Regenerate its deterministic PNG after an intentional visual change:
 
@@ -79,7 +87,7 @@ Regenerate its deterministic PNG after an intentional visual change:
 & "C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" scripts\render-rich-menu.py
 ```
 
-The Admin publish action validates the definition, creates a new LINE Rich Menu, uploads the PNG, updates its stable alias, sets it as default and verifies the live default before any best-effort cleanup of the prior menu.
+The Admin publish action validates the definition and page-switch targets, creates a new LINE Rich Menu, uploads the PNG/JPEG, updates its stable alias, sets it as default and verifies the live default before any best-effort cleanup of the prior menu. If Alias or default switching fails, it attempts to restore the previous live state before recording the failed run.
 
 ## Local product snapshot
 
