@@ -55,6 +55,8 @@ npx wrangler secret put ADMIN_ACCESS_KEY
 - `POST /api/admin/chat/threads/:id/notes` — add an internal CRM note
 - `GET /api/admin/system/status` — protected non-secret system configuration status
 - `GET /api/admin/rich-menu/definition` — protected Rich Menu draft definition
+- `GET /api/admin/rich-menu/studio` — protected template, project, editable draft, version and publish-run workspace data
+- `PATCH /api/admin/rich-menu/projects/:id/draft` — validate and save Rich Menu names, tappable bounds and actions without publishing
 
 ## CRM and Admin
 
@@ -69,7 +71,7 @@ npx wrangler d1 migrations list joson-care-crm --remote
 npx wrangler d1 migrations apply joson-care-crm --remote
 ```
 
-`/admin` stays unavailable until `ADMIN_ACCESS_KEY` is configured as a Worker Secret. Rich Menu templates, projects, versions and publish runs are stored in D1. The Joson default project uses a custom asymmetric layout with a large smart-advisor entry, four real product images and a service rail instead of a stock six-grid template.
+`/admin` stays unavailable until `ADMIN_ACCESS_KEY` is configured as a Worker Secret. Rich Menu templates, projects, editable drafts, versions and publish runs are stored in D1. The Rich Menu Studio follows the template → project → content/action editor → publish/version workflow. Draft saves validate LINE dimensions, bounds, overlap and action fields but never publish automatically. The Joson default project keeps its custom asymmetric layout with a large smart-advisor entry, four real product images and a service rail instead of a stock six-grid template.
 
 Regenerate its deterministic PNG after an intentional visual change:
 

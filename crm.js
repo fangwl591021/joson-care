@@ -224,6 +224,7 @@ function summarizeMessages(messages) {
 export async function handleAdminRequest(request, env, url) {
   const path = url.pathname;
   const publishMatch = path.match(/^\/api\/admin\/rich-menu\/projects\/([^/]+)\/publish$/);
+  const richMenuDraftMatch = path.match(/^\/api\/admin\/rich-menu\/projects\/([^/]+)\/draft$/);
   const chatThreadMatch = path.match(/^\/api\/admin\/chat\/threads\/([^/]+)$/);
   const chatReadMatch = path.match(/^\/api\/admin\/chat\/threads\/([^/]+)\/read$/);
   const chatNoteMatch = path.match(/^\/api\/admin\/chat\/threads\/([^/]+)\/notes$/);
@@ -274,10 +275,12 @@ export async function handleAdminRequest(request, env, url) {
   if (chatThreadMatch && request.method === "GET") return getChatThread(env.CRM_DB, decodeURIComponent(chatThreadMatch[1]));
   if (chatThreadMatch && request.method === "PATCH") return updateChatThread(request, env.CRM_DB, decodeURIComponent(chatThreadMatch[1]));
   if (path === "/api/admin/rich-menu/definition" && request.method === "GET") return adminJson({ ok: true, imagePath: RICH_MENU_IMAGE_PATH, definition: DEFAULT_RICH_MENU });
+  if (path === "/api/admin/rich-menu/studio" && request.method === "GET") return getRichMenuStudio(env.CRM_DB);
   if (path === "/api/admin/rich-menu/templates" && request.method === "GET") return getRichMenuTemplates(env.CRM_DB);
   if (path === "/api/admin/rich-menu/projects" && request.method === "GET") return getRichMenuProjects(env.CRM_DB);
   if (path === "/api/admin/rich-menu/status" && request.method === "GET") return getRichMenuStatus(env);
   if (path === "/api/admin/rich-menu/verify" && request.method === "GET") return verifyRichMenuLive(env, url);
+  if (richMenuDraftMatch && request.method === "PATCH") return saveRichMenuDraft(request, env.CRM_DB, decodeURIComponent(richMenuDraftMatch[1]));
   if (publishMatch && request.method === "POST") return publishRichMenuProject(env, url, decodeURIComponent(publishMatch[1]));
 
   const detailMatch = path.match(/^\/api\/admin\/contacts\/([^/]+)$/);
@@ -301,6 +304,133 @@ async function getRichMenuProjects(db) {
     LEFT JOIN rich_menu_versions v ON v.id = p.current_version_id
     ORDER BY p.updated_at DESC`).all();
   return adminJson({ ok: true, projects: result.results || [] });
+}
+
+async function ensureRichMenuDraft(db, projectId) {
+  const existing = await db.prepare("SELECT project_id, definition_json FROM rich_menu_project_drafts WHERE project_id = ?").bind(projectId).first();
+  if (existing) {
+    try {
+      validateRichMenuDefinition(JSON.parse(existing.definition_json || "null"));
+      return;
+    } catch {
+      const now = new Date().toISOString();
+      await db.prepare("UPDATE rich_menu_project_drafts SET definition_json = ?, image_path = ?, revision = revision + 1, updated_at = ? WHERE project_id = ?")
+        .bind(JSON.stringify(DEFAULT_RICH_MENU), RICH_MENU_IMAGE_PATH, now, projectId).run();
+      return;
+    }
+  }
+  const now = new Date().toISOString();
+  await db.prepare(`INSERT OR IGNORE INTO rich_menu_project_drafts
+    (project_id, definition_json, image_path, revision, created_at, updated_at)
+    SELECT p.id, COALESCE(v.definition_json, ?), COALESCE(v.image_path, t.default_image_path, ?), 1, ?, ?
+    FROM rich_menu_projects p JOIN rich_menu_templates t ON t.id = p.template_id
+    LEFT JOIN rich_menu_versions v ON v.id = p.current_version_id WHERE p.id = ?`)
+    .bind(JSON.stringify(DEFAULT_RICH_MENU), RICH_MENU_IMAGE_PATH, now, now, projectId).run();
+}
+
+async function getRichMenuStudio(db) {
+  await ensureRichMenuDraft(db, RICH_MENU_PROJECT_ID);
+  const results = await db.batch([
+    db.prepare(`SELECT p.id, p.name, p.status, p.template_id, p.current_version_id, p.updated_at,
+      t.name AS template_name, t.description AS template_description, t.width, t.height, t.layout_json, t.default_image_path,
+      d.definition_json, d.image_path AS draft_image_path, d.revision, d.updated_at AS draft_updated_at,
+      v.line_rich_menu_id, v.published_at
+      FROM rich_menu_projects p JOIN rich_menu_templates t ON t.id = p.template_id
+      LEFT JOIN rich_menu_project_drafts d ON d.project_id = p.id
+      LEFT JOIN rich_menu_versions v ON v.id = p.current_version_id
+      WHERE p.id = ?`).bind(RICH_MENU_PROJECT_ID),
+    db.prepare("SELECT id, name, description, width, height, layout_json, default_image_path, status, updated_at FROM rich_menu_templates ORDER BY updated_at DESC"),
+    db.prepare(`SELECT id, version_id, previous_line_rich_menu_id, new_line_rich_menu_id, stage, status, error_message, started_at, finished_at
+      FROM rich_menu_publish_runs WHERE project_id = ? ORDER BY started_at DESC LIMIT 12`).bind(RICH_MENU_PROJECT_ID),
+    db.prepare(`SELECT id, name, line_rich_menu_id, status, published_at, created_at
+      FROM rich_menu_versions ORDER BY created_at DESC LIMIT 12`),
+  ]);
+  const row = results[0].results?.[0];
+  if (!row) return adminJson({ error: "project_not_found" }, 404);
+  let definition = DEFAULT_RICH_MENU;
+  try { definition = JSON.parse(row.definition_json || "null") || DEFAULT_RICH_MENU; } catch { definition = DEFAULT_RICH_MENU; }
+  const templates = (results[1].results || []).map((template) => {
+    let layout = null;
+    try { layout = JSON.parse(template.layout_json || "null"); } catch { layout = null; }
+    return { ...template, layout };
+  });
+  delete row.definition_json;
+  return adminJson({ ok: true, project: { ...row, definition }, templates, publishRuns: results[2].results || [], versions: results[3].results || [] });
+}
+
+async function saveRichMenuDraft(request, db, projectId) {
+  if (projectId !== RICH_MENU_PROJECT_ID) return adminJson({ error: "project_not_found" }, 404);
+  const length = Number(request.headers.get("content-length") || 0);
+  if (length > 100000) return adminJson({ error: "payload_too_large" }, 413);
+  const payload = await request.json().catch(() => null);
+  if (!payload || typeof payload !== "object") return adminJson({ error: "invalid_json" }, 400);
+  let definition;
+  try {
+    definition = validateRichMenuDefinition(payload.definition);
+  } catch (error) {
+    return adminJson({ error: "invalid_rich_menu", message: String(error?.message || error) }, 400);
+  }
+  const projectName = String(payload.projectName || "").trim().slice(0, 120);
+  if (!projectName) return adminJson({ error: "project_name_required" }, 400);
+  await ensureRichMenuDraft(db, projectId);
+  const now = new Date().toISOString();
+  await db.batch([
+    db.prepare("UPDATE rich_menu_projects SET name = ?, status = CASE WHEN status = 'publishing' THEN status ELSE 'draft' END, updated_at = ? WHERE id = ?")
+      .bind(projectName, now, projectId),
+    db.prepare(`UPDATE rich_menu_project_drafts SET definition_json = ?, revision = revision + 1, updated_at = ? WHERE project_id = ?`)
+      .bind(JSON.stringify(definition), now, projectId),
+    db.prepare(`INSERT INTO admin_audit_logs (id, actor, action, target_type, target_id, detail_json, created_at)
+      VALUES (?, 'admin', 'rich_menu.draft.save', 'rich_menu_project', ?, ?, ?)`)
+      .bind(crypto.randomUUID(), projectId, JSON.stringify({ areaCount: definition.areas.length }), now),
+  ]);
+  const draft = await db.prepare("SELECT revision, updated_at FROM rich_menu_project_drafts WHERE project_id = ?").bind(projectId).first();
+  return adminJson({ ok: true, projectId, definition, revision: draft?.revision, updatedAt: draft?.updated_at });
+}
+
+export function validateRichMenuDefinition(input) {
+  if (!input || typeof input !== "object") throw new Error("缺少圖文選單定義");
+  const width = Number(input?.size?.width);
+  const height = Number(input?.size?.height);
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 800 || width > 2500 || height < 250 || width / height < 1.45) throw new Error("圖片尺寸或比例不符合 LINE 規格");
+  const name = String(input.name || "").trim().slice(0, 300);
+  const chatBarText = String(input.chatBarText || "").trim().slice(0, 14);
+  if (!name || !chatBarText) throw new Error("選單名稱與聊天列文字不可空白");
+  if (!Array.isArray(input.areas) || input.areas.length < 1 || input.areas.length > 20) throw new Error("熱區數量必須介於 1 到 20");
+  const areas = input.areas.map((area, index) => {
+    const bounds = {
+      x: Number(area?.bounds?.x), y: Number(area?.bounds?.y),
+      width: Number(area?.bounds?.width), height: Number(area?.bounds?.height),
+    };
+    if (!Object.values(bounds).every(Number.isInteger) || bounds.x < 0 || bounds.y < 0 || bounds.width < 1 || bounds.height < 1 || bounds.x + bounds.width > width || bounds.y + bounds.height > height) throw new Error(`第 ${index + 1} 個熱區座標超出範圍`);
+    const source = area?.action || {};
+    const type = String(source.type || "");
+    const label = String(source.label || `區塊 ${index + 1}`).trim().slice(0, 20);
+    let action;
+    if (type === "uri") {
+      const uri = String(source.uri || "").trim().slice(0, 1000);
+      if (!/^(https?:\/\/|tel:|mailto:)/i.test(uri)) throw new Error(`第 ${index + 1} 個熱區網址格式不正確`);
+      action = { type, label, uri };
+    } else if (type === "message") {
+      const text = String(source.text || "").trim().slice(0, 300);
+      if (!text) throw new Error(`第 ${index + 1} 個熱區缺少傳送文字`);
+      action = { type, label, text };
+    } else if (type === "postback") {
+      const data = String(source.data || "").trim().slice(0, 300);
+      const displayText = String(source.displayText || "").trim().slice(0, 300);
+      if (!data) throw new Error(`第 ${index + 1} 個熱區缺少 Postback Data`);
+      action = { type, label, data, ...(displayText ? { displayText } : {}) };
+    } else {
+      throw new Error(`第 ${index + 1} 個熱區動作類型不支援`);
+    }
+    return { bounds, action };
+  });
+  for (let left = 0; left < areas.length; left += 1) {
+    for (let right = left + 1; right < areas.length; right += 1) {
+      const a = areas[left].bounds; const b = areas[right].bounds;
+      if (a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y) throw new Error(`第 ${left + 1} 與第 ${right + 1} 個熱區互相重疊`);
+    }
+  }
+  return { size: { width, height }, selected: Boolean(input.selected), name, chatBarText, areas };
 }
 
 async function getRichMenuStatus(env) {
@@ -383,6 +513,12 @@ async function publishRichMenuProject(env, url, projectId) {
 
   const project = await env.CRM_DB.prepare("SELECT * FROM rich_menu_projects WHERE id = ?").bind(projectId).first();
   if (!project) return adminJson({ error: "project_not_found" }, 404);
+  await ensureRichMenuDraft(env.CRM_DB, projectId);
+  const draft = await env.CRM_DB.prepare("SELECT definition_json, image_path, revision FROM rich_menu_project_drafts WHERE project_id = ?").bind(projectId).first();
+  let menuDefinition;
+  try { menuDefinition = validateRichMenuDefinition(JSON.parse(draft?.definition_json || "null")); }
+  catch (error) { return adminJson({ error: "invalid_rich_menu_draft", message: String(error?.message || error) }, 400); }
+  const imagePath = String(draft?.image_path || RICH_MENU_IMAGE_PATH);
 
   const now = new Date().toISOString();
   const runId = crypto.randomUUID();
@@ -398,7 +534,7 @@ async function publishRichMenuProject(env, url, projectId) {
       env.CRM_DB.prepare(`INSERT INTO rich_menu_versions
         (id, name, audience_stage, alias_id, definition_json, image_path, status, created_at, updated_at)
         VALUES (?, ?, 'default', ?, ?, ?, 'draft', ?, ?)`)
-        .bind(versionId, DEFAULT_RICH_MENU.name, RICH_MENU_ALIAS_ID, JSON.stringify(DEFAULT_RICH_MENU), RICH_MENU_IMAGE_PATH, now, now),
+        .bind(versionId, menuDefinition.name, RICH_MENU_ALIAS_ID, JSON.stringify(menuDefinition), imagePath, now, now),
       env.CRM_DB.prepare(`INSERT INTO rich_menu_publish_runs
         (id, project_id, version_id, stage, status, started_at)
         VALUES (?, ?, ?, 'prepare', 'running', ?)`)
@@ -410,20 +546,20 @@ async function publishRichMenuProject(env, url, projectId) {
     await lineApiRequest("https://api.line.me/v2/bot/richmenu/validate", env.LINE_CHANNEL_ACCESS_TOKEN, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(DEFAULT_RICH_MENU),
+      body: JSON.stringify(menuDefinition),
     });
 
     await updatePublishRun(env.CRM_DB, runId, "create", previousRichMenuId, null);
     const created = await lineApiRequest("https://api.line.me/v2/bot/richmenu", env.LINE_CHANNEL_ACCESS_TOKEN, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(DEFAULT_RICH_MENU),
+      body: JSON.stringify(menuDefinition),
     }, true);
     newRichMenuId = String(created.richMenuId || "");
     if (!newRichMenuId) throw new Error("LINE did not return a Rich Menu ID");
 
     await updatePublishRun(env.CRM_DB, runId, "upload", previousRichMenuId, newRichMenuId);
-    const assetUrl = new URL(RICH_MENU_IMAGE_PATH, url.origin);
+    const assetUrl = new URL(imagePath, url.origin);
     const assetResponse = await env.ASSETS.fetch(new Request(assetUrl));
     if (!assetResponse.ok) throw new Error(`Rich Menu image asset unavailable: HTTP ${assetResponse.status}`);
     const imageBytes = await assetResponse.arrayBuffer();
@@ -452,7 +588,7 @@ async function publishRichMenuProject(env, url, projectId) {
       env.CRM_DB.prepare("UPDATE rich_menu_projects SET status = 'published', current_version_id = ?, updated_at = ? WHERE id = ?").bind(versionId, finishedAt, projectId),
       env.CRM_DB.prepare("UPDATE rich_menu_publish_runs SET stage = 'verified', status = 'succeeded', previous_line_rich_menu_id = ?, new_line_rich_menu_id = ?, finished_at = ? WHERE id = ?").bind(previousRichMenuId, newRichMenuId, finishedAt, runId),
       env.CRM_DB.prepare("INSERT INTO admin_audit_logs (id, actor, action, target_type, target_id, detail_json, created_at) VALUES (?, 'admin', 'rich_menu.publish', 'rich_menu_project', ?, ?, ?)")
-        .bind(crypto.randomUUID(), projectId, JSON.stringify({ versionId, previousRichMenuId, newRichMenuId }), finishedAt),
+        .bind(crypto.randomUUID(), projectId, JSON.stringify({ versionId, previousRichMenuId, newRichMenuId, draftRevision: draft?.revision }), finishedAt),
     ]);
 
     const cleanup = await cleanupOldRichMenu(env.LINE_CHANNEL_ACCESS_TOKEN, previousRichMenuId, newRichMenuId);
@@ -897,9 +1033,9 @@ function renderAdminProductsPage() {
 }
 
 function renderAdminRichMenuPage() {
-  const content = `<section class="rich-grid"><div class="panel"><div class="section-title"><div><div class="eyebrow">LIVE PREVIEW</div><h2>Joson 客製智能圖文選單</h2></div><span class="badge" id="publish-status">讀取中</span></div><img class="menu-preview large" src="${RICH_MENU_IMAGE_PATH}" alt="客製智能圖文選單"><div class="action-row"><button id="publish-button">發布目前專案</button><button class="secondary" id="verify-button">驗證線上版本</button></div><div id="verify-result" class="menu-status">尚未執行驗證</div></div><aside><div class="panel"><div class="eyebrow">PROJECT</div><h2>上架專案</h2><div id="project-detail" class="detail-list">載入中…</div></div><div class="panel top-gap"><div class="eyebrow">TEMPLATES</div><h2>模板庫</h2><div id="template-list" class="detail-list">載入中…</div></div></aside></section>`;
-  const script = `${commonAdminScript()}async function load(){const [s,t,p]=await Promise.all([api('/api/admin/rich-menu/status'),api('/api/admin/rich-menu/templates'),api('/api/admin/rich-menu/projects')]);const x=s.project||{};document.getElementById('publish-status').textContent=x.status||'draft';document.getElementById('project-detail').innerHTML=[['專案名稱',x.name],['使用模板',x.template_name],['LINE Rich Menu',s.lineDefault?.richMenuId],['發布時間',fmt(x.published_at)]].map(r=>'<div><span>'+e(r[0])+'</span><b>'+e(r[1]||'—')+'</b></div>').join('');document.getElementById('template-list').innerHTML=t.templates.map(x=>'<div><span>'+e(x.name)+'</span><b>'+e(x.width)+' × '+e(x.height)+'</b></div>').join('')}async function publish(){if(!confirm('確定發布目前的 Joson 客製圖文選單？'))return;const b=document.getElementById('publish-button');b.disabled=true;b.textContent='發布中…';try{const d=await api('/api/admin/rich-menu/projects/${RICH_MENU_PROJECT_ID}/publish',{method:'POST'});alert('發布成功：'+d.newRichMenuId);await load();await verify()}catch(err){alert('發布失敗：'+err.message)}finally{b.disabled=false;b.textContent='發布目前專案'}}async function verify(){const b=document.getElementById('verify-button');b.disabled=true;try{const d=await api('/api/admin/rich-menu/verify');document.getElementById('verify-result').innerHTML='<strong>'+(d.ok?'驗證通過':'驗證未通過')+'</strong><span>預設選單：'+e(d.defaultMatch?'一致':'不一致')+'</span><span>版型定義：'+e(d.definitionMatch?'一致':'不一致')+'</span><span>圖片雜湊：'+e(d.imageShaMatch?'一致':'不一致')+'</span>'}catch(err){document.getElementById('verify-result').textContent='驗證失敗：'+err.message}finally{b.disabled=false}}document.getElementById('publish-button').addEventListener('click',publish);document.getElementById('verify-button').addEventListener('click',verify);load();`;
-  return adminPage("rich-menu", "智能圖文選單", "管理客製模板、發布專案與 LINE 線上版本一致性。", content, script);
+  const content = `<style>.studio-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}.studio-step{display:flex;gap:10px;align-items:center;padding:12px 14px;border:1px solid #dce6e3;border-radius:12px;background:#fff}.studio-step span{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:#1b6b55;color:#fff;font-weight:900}.studio-step small{display:block;color:#687e77}.studio-grid{display:grid;grid-template-columns:240px minmax(420px,1fr) 330px;gap:15px;align-items:start}.studio-side{display:grid;gap:14px}.studio-panel{padding:16px}.studio-panel h3{margin:3px 0 12px}.template-card{padding:10px;border:2px solid #6fa998;border-radius:11px;background:#edf5f2}.template-thumb{width:100%;aspect-ratio:2500/1686;object-fit:cover;border-radius:7px;margin-bottom:8px}.template-card small,.project-card small{display:block;color:#657a74;margin-top:4px}.project-card{padding:11px;border-radius:10px;background:#f4f7f6}.studio-center{min-width:0}.studio-meta{display:grid;grid-template-columns:1fr 200px;gap:10px;margin-bottom:12px}.studio-meta label{font-size:12px}.canvas-wrap{padding:14px;border-radius:13px;background:#dfe8e5}.rich-canvas{position:relative;width:100%;aspect-ratio:2500/1686;overflow:hidden;border:4px solid #143f36;border-radius:10px;background:#fff}.rich-canvas img{display:block;width:100%;height:100%;object-fit:contain}.area-overlay{position:absolute;border:2px solid rgba(220,38,38,.8);border-radius:4px;background:rgba(239,68,68,.13);color:#fff;padding:0;overflow:hidden}.area-overlay.active{border:3px solid #f8c653;background:rgba(248,198,83,.27);z-index:2}.area-overlay span{position:absolute;left:3px;top:3px;max-width:calc(100% - 6px);padding:2px 5px;border-radius:4px;background:#b91c1c;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.area-overlay.active span{background:#8b6500}.canvas-note{display:flex;justify-content:space-between;gap:10px;margin-top:9px;color:#657a74;font-size:11px}.area-list{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:12px}.area-chip{padding:8px;background:#f1f5f4;color:#3f5f57;border:1px solid #d7e2df}.area-chip.active{background:#1b6b55;color:#fff}.editor-empty{padding:50px 10px;text-align:center;color:#657a74}.editor-form{display:grid;gap:11px}.editor-form label{font-size:12px}.coordinate-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}.editor-help{padding:9px;border-radius:8px;background:#fff7e2;color:#735e25;font-size:11px}.studio-actions{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-top:15px;padding:14px;border:1px solid #dce6e3;border-radius:12px;background:#fff}.studio-actions>div{display:flex;gap:9px}.save-state{font-size:12px;color:#657a74}.history-grid{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-top:16px}.history-list{display:grid;gap:7px}.history-row{display:grid;grid-template-columns:1fr auto;gap:10px;padding:9px;border-radius:8px;background:#f5f8f7;font-size:12px}.history-row small{display:block;color:#657a74}.verify-box{margin-top:10px}@media(max-width:1200px){.studio-grid{grid-template-columns:210px 1fr}.studio-editor{grid-column:1/-1}.editor-form{grid-template-columns:repeat(2,1fr)}.editor-form .full{grid-column:1/-1}}@media(max-width:850px){.studio-steps{grid-template-columns:1fr}.studio-grid{grid-template-columns:1fr}.studio-meta{grid-template-columns:1fr}.studio-editor{grid-column:auto}.history-grid{grid-template-columns:1fr}.studio-actions{align-items:stretch;flex-direction:column}.studio-actions>div{display:grid;grid-template-columns:1fr 1fr}.editor-form{grid-template-columns:1fr}.editor-form .full{grid-column:auto}}</style><section class="studio-steps"><div class="studio-step"><span>1</span><div><b>選擇模板</b><small>從母版建立專案</small></div></div><div class="studio-step"><span>2</span><div><b>內容與熱區</b><small>設定座標及點擊動作</small></div></div><div class="studio-step"><span>3</span><div><b>發布與驗證</b><small>建立 LINE 版本並核對</small></div></div></section><section class="studio-grid"><aside class="studio-side"><div class="panel studio-panel"><div class="eyebrow">TEMPLATE CENTER</div><h3>圖文選單模板</h3><div id="template-list">載入中…</div></div><div class="panel studio-panel"><div class="eyebrow">PROJECT</div><h3>圖文選單專案</h3><div id="project-card">載入中…</div></div></aside><div class="panel studio-panel studio-center"><div class="section-title"><div><div class="eyebrow">CONTENT EDITOR</div><h2>內容設定</h2></div><span class="badge" id="draft-revision">草稿</span></div><div class="studio-meta"><label>專案名稱<input id="project-name" maxlength="120"></label><label>聊天列文字<input id="chat-bar-text" maxlength="14"></label><label>LINE 選單名稱<input id="menu-name" maxlength="300"></label><label class="checkbox-label"><input id="menu-selected" type="checkbox"> 預設展開選單</label></div><div class="canvas-wrap"><div class="rich-canvas" id="rich-canvas"><img id="canvas-image" src="${RICH_MENU_IMAGE_PATH}" alt="圖文選單畫布"><div id="canvas-areas"></div></div><div class="canvas-note"><span>紅框為 LINE 可點擊熱區；選取後於右側編輯。</span><span>2500 × 1686</span></div></div><div class="area-list" id="area-list"></div></div><aside class="panel studio-panel studio-editor"><div class="eyebrow">ACTION SETTINGS</div><h2>熱區動作</h2><div id="area-editor" class="editor-empty">請先從畫布或熱區清單選擇區塊。</div></aside></section><section class="studio-actions"><div><span class="save-state" id="save-state">讀取草稿中…</span></div><div><button class="secondary" id="verify-button">驗證線上版本</button><button class="secondary" id="save-button">儲存草稿</button><button id="publish-button">儲存並發布</button></div></section><div id="verify-result" class="menu-status verify-box">尚未執行線上驗證</div><section class="history-grid"><div class="panel"><div class="eyebrow">VERSIONS</div><h2>版本紀錄</h2><div class="history-list" id="version-list">載入中…</div></div><div class="panel"><div class="eyebrow">PUBLISH RUNS</div><h2>上架紀錄</h2><div class="history-list" id="run-list">載入中…</div></div></section>`;
+  const script = `${commonAdminScript()}let studio=null;let definition=null;let activeArea=0;function areaName(a,i){return a?.action?.label||('區塊 '+(i+1))}function renderTemplates(){document.getElementById('template-list').innerHTML=studio.templates.map(t=>'<div class="template-card">'+(t.default_image_path?'<img class="template-thumb" src="'+e(t.default_image_path)+'" alt="">':'')+'<b>'+e(t.name)+'</b><small>'+e(t.description||'')+'</small><small>'+e(t.width)+' × '+e(t.height)+' · 已套用</small></div>').join('')}function renderProject(){const p=studio.project;document.getElementById('project-card').innerHTML='<div class="project-card"><b>'+e(p.name)+'</b><small>'+e(p.template_name)+'</small><small>'+e(definition.areas.length)+' 個熱區 · '+e(p.status)+'</small><small>最後修改 '+e(fmt(p.draft_updated_at))+'</small></div>';document.getElementById('project-name').value=p.name;document.getElementById('chat-bar-text').value=definition.chatBarText;document.getElementById('menu-name').value=definition.name;document.getElementById('menu-selected').checked=definition.selected;document.getElementById('draft-revision').textContent='草稿 v'+e(p.revision||1)}function renderCanvas(){const w=definition.size.width,h=definition.size.height;document.getElementById('canvas-areas').innerHTML=definition.areas.map((a,i)=>'<button class="area-overlay '+(i===activeArea?'active':'')+'" data-area="'+i+'" style="left:'+(a.bounds.x/w*100)+'%;top:'+(a.bounds.y/h*100)+'%;width:'+(a.bounds.width/w*100)+'%;height:'+(a.bounds.height/h*100)+'%"><span>'+e(areaName(a,i))+'</span></button>').join('');document.getElementById('area-list').innerHTML=definition.areas.map((a,i)=>'<button class="area-chip '+(i===activeArea?'active':'')+'" data-area="'+i+'">'+e((i+1)+'. '+areaName(a,i))+'</button>').join('');document.querySelectorAll('[data-area]').forEach(b=>b.addEventListener('click',()=>{activeArea=Number(b.dataset.area);renderCanvas();renderEditor()}))}function actionFields(a){const x=a.action;if(x.type==='uri')return '<label class="full">網址 URI<input id="action-uri" value="'+e(x.uri||'')+'" placeholder="https://、tel: 或 mailto:"></label>';if(x.type==='message')return '<label class="full">傳送文字<textarea id="action-text" rows="3">'+e(x.text||'')+'</textarea></label>';return '<label class="full">Postback Data<input id="action-data" value="'+e(x.data||'')+'" placeholder="action=..."></label><label class="full">顯示文字<input id="action-display" value="'+e(x.displayText||'')+'"></label>'}function renderEditor(){const a=definition.areas[activeArea];if(!a)return;const box=document.getElementById('area-editor');box.className='editor-form';box.innerHTML='<label class="full">區塊名稱<input id="area-label" maxlength="20" value="'+e(areaName(a,activeArea))+'"></label><label class="full">動作類型<select id="action-type"><option value="postback">Postback</option><option value="message">傳送文字</option><option value="uri">開啟網址</option></select></label>'+actionFields(a)+'<div class="full"><b>熱區座標</b><div class="coordinate-grid"><label>X<input id="bound-x" type="number" min="0" value="'+e(a.bounds.x)+'"></label><label>Y<input id="bound-y" type="number" min="0" value="'+e(a.bounds.y)+'"></label><label>寬度<input id="bound-width" type="number" min="1" value="'+e(a.bounds.width)+'"></label><label>高度<input id="bound-height" type="number" min="1" value="'+e(a.bounds.height)+'"></label></div></div><div class="editor-help full">座標不可超出 2500 × 1686，熱區彼此不可重疊。草稿儲存時會再次驗證。</div>';document.getElementById('action-type').value=a.action.type;document.getElementById('area-label').addEventListener('input',ev=>{a.action.label=ev.target.value;renderCanvas()});document.getElementById('action-type').addEventListener('change',ev=>{const label=a.action.label||areaName(a,activeArea);a.action=ev.target.value==='uri'?{type:'uri',label,uri:'https://'}:ev.target.value==='message'?{type:'message',label,text:label}:{type:'postback',label,data:'action=custom_'+(activeArea+1),displayText:label};renderCanvas();renderEditor()});[['bound-x','x'],['bound-y','y'],['bound-width','width'],['bound-height','height']].forEach(x=>document.getElementById(x[0]).addEventListener('input',ev=>{a.bounds[x[1]]=Number(ev.target.value);renderCanvas()}));document.getElementById('action-uri')?.addEventListener('input',ev=>a.action.uri=ev.target.value);document.getElementById('action-text')?.addEventListener('input',ev=>a.action.text=ev.target.value);document.getElementById('action-data')?.addEventListener('input',ev=>a.action.data=ev.target.value);document.getElementById('action-display')?.addEventListener('input',ev=>a.action.displayText=ev.target.value)}function syncMeta(){studio.project.name=document.getElementById('project-name').value;definition.chatBarText=document.getElementById('chat-bar-text').value;definition.name=document.getElementById('menu-name').value;definition.selected=document.getElementById('menu-selected').checked}function renderHistory(){document.getElementById('version-list').innerHTML=studio.versions.length?studio.versions.map(v=>'<div class="history-row"><div><b>'+e(v.name)+'</b><small>'+e(v.line_rich_menu_id||'尚無 LINE ID')+'</small></div><span class="badge">'+e(v.status)+'</span></div>').join(''):'<div class="muted">尚無版本</div>';document.getElementById('run-list').innerHTML=studio.publishRuns.length?studio.publishRuns.map(r=>'<div class="history-row"><div><b>'+e(r.stage)+'</b><small>'+e(fmt(r.started_at))+(r.error_message?' · '+e(r.error_message):'')+'</small></div><span class="badge">'+e(r.status)+'</span></div>').join(''):'<div class="muted">尚無上架紀錄</div>'}async function load(){studio=await api('/api/admin/rich-menu/studio');definition=studio.project.definition;activeArea=0;document.getElementById('canvas-image').src=studio.project.draft_image_path||'${RICH_MENU_IMAGE_PATH}';renderTemplates();renderProject();renderCanvas();renderEditor();renderHistory();document.getElementById('save-state').textContent='草稿已載入 · '+fmt(studio.project.draft_updated_at)}async function save(showAlert=true){syncMeta();const d=await api('/api/admin/rich-menu/projects/${RICH_MENU_PROJECT_ID}/draft',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({projectName:studio.project.name,definition})});studio.project.revision=d.revision;studio.project.draft_updated_at=d.updatedAt;studio.project.name=document.getElementById('project-name').value;document.getElementById('draft-revision').textContent='草稿 v'+e(d.revision);document.getElementById('save-state').textContent='已儲存 · '+fmt(d.updatedAt);if(showAlert)alert('圖文選單草稿已儲存。');return d}async function publish(){if(!confirm('確定儲存草稿並發布到 LINE？新版驗證完成前不會移除舊版。'))return;const b=document.getElementById('publish-button');b.disabled=true;b.textContent='發布中…';try{await save(false);const d=await api('/api/admin/rich-menu/projects/${RICH_MENU_PROJECT_ID}/publish',{method:'POST'});alert('發布並驗證成功：'+d.newRichMenuId);await load();await verify()}catch(err){alert('發布失敗：'+err.message)}finally{b.disabled=false;b.textContent='儲存並發布'}}async function verify(){const b=document.getElementById('verify-button');b.disabled=true;try{const d=await api('/api/admin/rich-menu/verify');document.getElementById('verify-result').innerHTML='<strong>'+(d.ok?'驗證通過':'驗證未通過')+'</strong><span>預設選單：'+e(d.defaultMatch?'一致':'不一致')+'</span><span>版型定義：'+e(d.definitionMatch?'一致':'不一致')+'</span><span>圖片雜湊：'+e(d.imageShaMatch?'一致':'不一致')+'</span>'}catch(err){document.getElementById('verify-result').textContent='驗證失敗：'+err.message}finally{b.disabled=false}}document.getElementById('save-button').addEventListener('click',()=>save(true).catch(err=>alert('儲存失敗：'+err.message)));document.getElementById('publish-button').addEventListener('click',publish);document.getElementById('verify-button').addEventListener('click',verify);load().catch(err=>{document.getElementById('save-state').textContent='載入失敗：'+err.message});`;
+  return adminPage("rich-menu", "智能圖文選單工作室", "依範例模組管理模板、專案、畫布熱區、動作、版本與 LINE 上架。", content, script);
 }
 
 function renderAdminSettingsPage() {
@@ -915,6 +1051,7 @@ function page(title, body) {
 @media(max-width:800px){.admin-shell{grid-template-columns:1fr}.admin-sidebar{position:sticky;z-index:10;height:auto;padding:10px 12px;overflow:auto}.admin-brand,.sidebar-foot{display:none}.admin-sidebar nav{display:flex;min-width:max-content}.admin-nav-item{padding:9px 12px}.admin-nav-item span{display:none}.admin-header{padding:19px 17px}.admin-header h1{font-size:22px}.admin-header p{font-size:13px}.admin-content{padding:16px}.stats,.monitor-stats{grid-template-columns:1fr 1fr}.settings-grid{grid-template-columns:1fr}.catalog-tools{grid-template-columns:1fr}.dashboard-grid{grid-template-columns:1fr}.public-link{display:none}}
 @media(max-width:480px){.module-grid{grid-template-columns:1fr}.stat strong{font-size:24px}.admin-header{align-items:flex-start}.section-title{align-items:flex-start}.route-list>div{grid-template-columns:1fr}.span-two{grid-column:auto}}
 .dashboard-grid>.span-two{grid-column:auto}
+.studio-grid,.studio-side,.studio-center,.studio-editor,.template-card{min-width:0}.template-card{overflow:hidden}.template-thumb{max-width:100%}@media(max-width:850px){.studio-grid,.studio-side,.studio-center,.studio-editor{width:100%;max-width:100%}.admin-content{overflow-x:hidden}}
 </style></head><body>${body}</body></html>`;
 }
 

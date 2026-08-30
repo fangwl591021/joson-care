@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
-import { DEFAULT_RICH_MENU, monitorPriorityForIntent, postbackToText } from "../crm.js";
+import { DEFAULT_RICH_MENU, monitorPriorityForIntent, postbackToText, validateRichMenuDefinition } from "../crm.js";
 
 test("custom Rich Menu uses an asymmetric primary area and valid postbacks", () => {
   assert.deepEqual(DEFAULT_RICH_MENU.size, { width: 2500, height: 1686 });
@@ -54,5 +54,25 @@ test("admin includes protected AI chat monitoring routes", () => {
   }
   for (const section of ["總覽", "CRM", "商品區", "圖文選單", "設定區"]) {
     assert.match(source, new RegExp(section));
+  }
+});
+
+test("Rich Menu Studio validates editable draft definitions", () => {
+  const draft = structuredClone(DEFAULT_RICH_MENU);
+  draft.name = "Joson Studio draft";
+  draft.areas[0].action.displayText = "開始選床";
+  assert.equal(validateRichMenuDefinition(draft).areas.length, 6);
+
+  const overlap = structuredClone(draft);
+  overlap.areas[1].bounds.x = 100;
+  assert.throws(() => validateRichMenuDefinition(overlap), /互相重疊/);
+});
+
+test("Rich Menu Studio exposes template, project, draft and version modules", () => {
+  const source = fs.readFileSync(new URL("../crm.js", import.meta.url), "utf8");
+  assert.match(source, /\/api\/admin\/rich-menu\/studio/);
+  assert.match(source, /rich_menu_project_drafts/);
+  for (const label of ["圖文選單模板", "圖文選單專案", "內容設定", "熱區動作", "版本紀錄", "上架紀錄"]) {
+    assert.match(source, new RegExp(label));
   }
 });
