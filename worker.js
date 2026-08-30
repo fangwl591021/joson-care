@@ -9,7 +9,7 @@ export default {
     if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
 
     try {
-      if (path === "/health") return json({ ok: true, service: "joson-care", version: "0.1.0" });
+      if (path === "/health") return json({ ok: true, service: "joson-care", version: "1.0.0" });
       if (path === "/line-webhook") return handleLineWebhook(request, env);
       if (path === "/liff" || path === "/") return html(renderLiffPage(env));
       if (path === "/login") return startLineLogin(request, env);
@@ -72,15 +72,14 @@ function routeTextMessage(input) {
     return [buildNeedQuestion()];
   }
 
-  if (/床面較低|低床|上下床|怕太高|安全移位/.test(text)) {
+  if (/床面希望較低|床面較低|低床|上下床|怕太高/.test(text)) {
     return [
       productRecommendation(
         "ES-18UDS 超低型電動床",
-        "如果主要重視床面較低與居家使用，ES-18UDS 值得優先比較。官方資料顯示最低床面約 23.5 cm。",
+        ["適合一般居家使用", "最低床面約 23.5cm", "適合重視低床設計的家庭", "木質外觀較符合居家環境"],
         "https://www.joson-care.com/product_d.php?id=30&lang=tw&tb=1",
         ["超低床", "居家照護", "木質外觀"]
       ),
-      continueQuestion(),
     ];
   }
 
@@ -88,11 +87,10 @@ function routeTextMessage(input) {
     return [
       productRecommendation(
         "EN-3M 折疊型電動照護床",
-        "如果房間空間、移動或收納是主要考量，可優先比較 EN-3M 折疊型系列。",
+        ["可折疊", "易收納", "易移動", "適合空間有限的居家環境"],
         "https://www.joson-care.com/product_d.php?id=12&lang=tw&tb=1",
         ["可折疊", "居家使用", "移動收納"]
       ),
-      continueQuestion(),
     ];
   }
 
@@ -100,35 +98,72 @@ function routeTextMessage(input) {
     return [
       productRecommendation(
         "ES-05HDS 旗艦型電動床",
-        "如果比較重視四片式護欄與床邊操作，可優先比較 ES-05HDS。",
+        ["四片式護欄", "雙側操作控制", "適合重視完整防護與操作便利的家庭"],
         "https://www.joson-care.com/product_d.php?id=40&lang=tw&tb=1",
-        ["四片護欄", "雙側控制", "居家少量採購"]
+        ["四片護欄", "雙側控制", "居家照護"]
       ),
-      continueQuestion(),
     ];
   }
 
-  if (/床尾控制|角度顯示|專業操作|醫院級/.test(text)) {
+  if (/希望較完整操作功能|完整操作|床尾控制|角度顯示|專業操作/.test(text)) {
     return [
       productRecommendation(
         "ES-12DF 尊爵型電動床",
-        "如果希望有更完整的床尾控制、角度顯示與專業照護操作，可優先比較 ES-12DF。",
+        ["四片護欄", "床尾控制", "角度顯示", "較完整的專業照護功能"],
         "https://www.joson-care.com/product_d.php?id=2&lang=tw&tb=1",
         ["床尾控制", "角度顯示", "四片護欄"]
       ),
-      continueQuestion(),
+    ];
+  }
+
+  if (/不知道怎麼選|不確定怎麼選|沒有頭緒/.test(text)) {
+    return [buildNeedQuestion("沒關係，不需要先知道型號。目前最希望改善的是哪一件事？")];
+  }
+
+  if (/^(我要留下採購需求|請專人聯絡|請專人聯絡我)$/.test(text)) {
+    return [
+      textMessage("好的，請直接在聊天室留下您的姓名、聯絡電話、所在地區與需求概要，Joson 專責人員即可依資訊接續聯絡。請勿提供病歷或其他不必要的敏感資料。"),
+    ];
+  }
+
+  if (/^查看醫療床系列$/.test(text)) {
+    return [
+      {
+        type: "template",
+        altText: "Joson 醫療床系列",
+        template: {
+          type: "buttons",
+          title: "Joson 醫療床系列",
+          text: "院所與機構規格仍需由專責業務依場域與數量評估。",
+          actions: [
+            { type: "uri", label: "查看醫療床系列", uri: "https://www.joson-care.com/product.php?lang=tw" },
+            { type: "message", label: "聯絡專人", text: "請專人聯絡" },
+          ],
+        },
+      },
     ];
   }
 
   if (/醫院|院所|護理之家|機構|採購|標案/.test(text)) {
     return [
       textMessage(
-        "醫療院所與機構採購通常需要依數量、規格與使用場域由專責業務評估。第一版 LINE 智慧顧問以居家客戶為主；院所需求我會建議直接由專人接手。"
+        "醫療院所與機構採購通常需要依數量、使用場域與規格做專案評估，我可以先幫您整理需求，再由 Joson 專責業務接續。"
       ),
-      quickReplyMessage("您可以先留下需求方向：", [
-        ["我要詢價", "我要詢價"],
-        ["聯絡業務", "請專人聯絡我"],
-        ["回到選床", "AI選床"],
+      quickReplyMessage("請選擇下一步：", [
+        ["我要留下採購需求", "我要留下採購需求"],
+        ["查看醫療床系列", "查看醫療床系列"],
+        ["聯絡專人", "請專人聯絡"],
+      ]),
+    ];
+  }
+
+  if (/床型比較|比較其他床型/.test(text)) {
+    return [
+      quickReplyMessage("四款居家照護床可先依使用需求比較，請選擇目前最在意的條件：", [
+        ["床面希望較低", "床面希望較低"],
+        ["房間空間有限", "房間空間有限"],
+        ["希望四片護欄", "希望四片護欄"],
+        ["希望較完整操作功能", "希望較完整操作功能"],
       ]),
     ];
   }
@@ -190,38 +225,31 @@ function routeTextMessage(input) {
 
 function buildWelcomeMessage() {
   return quickReplyMessage(
-    "歡迎加入 Joson-Care。\n\n如果您正在幫家人找居家照護床，不需要先知道型號；告訴我使用情境，我可以先幫您縮小選擇範圍。\n\n※ 本服務提供產品資訊與選型協助，不取代醫療專業判斷。",
+    "您好，我是 Joson 智慧照護顧問。\n如果您不知道該怎麼挑電動照護床，我可以從使用情境開始幫您縮小範圍，不需要先知道型號。",
     [
       ["AI 幫我選床", "AI選床"],
       ["居家照護床", "居家照護床"],
+      ["床型比較", "床型比較"],
       ["售後服務", "售後服務"],
-      ["醫院／機構", "醫院採購"],
+      ["醫院／機構採購", "醫院／機構採購"],
     ]
   );
 }
 
-function buildNeedQuestion() {
+function buildNeedQuestion(prompt = "目前最希望改善的是哪一件事？") {
   return quickReplyMessage(
-    "先不看型號。請問目前最希望改善哪一件事？",
+    prompt,
     [
       ["床面希望較低", "床面希望較低"],
       ["房間空間有限", "房間空間有限"],
       ["希望四片護欄", "希望四片護欄"],
-      ["希望專業操作", "希望床尾控制與角度顯示"],
+      ["希望較完整操作功能", "希望較完整操作功能"],
+      ["我不知道怎麼選", "我不知道怎麼選"],
     ]
   );
 }
 
-function continueQuestion() {
-  return quickReplyMessage("還想比較哪個條件？", [
-    ["床面較低", "床面希望較低"],
-    ["可折疊收納", "希望可以折疊收納"],
-    ["四片護欄", "希望四片護欄"],
-    ["我要詢價", "我要詢價"],
-  ]);
-}
-
-function productRecommendation(title, summary, url, tags) {
+function productRecommendation(title, reasons, url, tags) {
   return {
     type: "flex",
     altText: `AI 推薦：${title}`,
@@ -234,7 +262,21 @@ function productRecommendation(title, summary, url, tags) {
         contents: [
           { type: "text", text: "AI 初步推薦", size: "sm", weight: "bold", color: "#1B6B55" },
           { type: "text", text: title, size: "xl", weight: "bold", wrap: true },
-          { type: "text", text: summary, size: "sm", color: "#555555", wrap: true },
+          { type: "text", text: "依您提供的使用需求，可以優先比較：", size: "sm", color: "#555555", wrap: true },
+          {
+            type: "box",
+            layout: "vertical",
+            spacing: "sm",
+            contents: reasons.map((reason) => ({
+              type: "box",
+              layout: "horizontal",
+              spacing: "sm",
+              contents: [
+                { type: "text", text: "•", flex: 0, size: "sm", color: "#1B6B55" },
+                { type: "text", text: reason, size: "sm", color: "#555555", wrap: true },
+              ],
+            })),
+          },
           {
             type: "box",
             layout: "horizontal",
@@ -255,8 +297,9 @@ function productRecommendation(title, summary, url, tags) {
         layout: "vertical",
         spacing: "sm",
         contents: [
-          { type: "button", style: "primary", color: "#1B6B55", action: { type: "uri", label: "查看官方產品", uri: url } },
-          { type: "button", action: { type: "message", label: "繼續讓 AI 比較", text: "AI選床" } },
+          { type: "button", style: "primary", color: "#1B6B55", action: { type: "uri", label: "查看產品", uri: url } },
+          { type: "button", action: { type: "message", label: "比較其他床型", text: "床型比較" } },
+          { type: "button", action: { type: "message", label: "請專人聯絡", text: "請專人聯絡" } },
         ],
       },
     },
@@ -395,7 +438,7 @@ function renderLiffPage(env) {
   <meta name="theme-color" content="#143c36">
   <title>Joson 智慧照護顧問</title>
   <style>
-    *{box-sizing:border-box}body{margin:0;background:#f4f7f6;color:#17332e;font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif}.wrap{max-width:720px;margin:auto;padding:24px 18px 48px}.hero{padding:28px 22px;border-radius:22px;background:linear-gradient(135deg,#163f37,#2d7162);color:white}.eyebrow{font-size:12px;letter-spacing:.14em;opacity:.8}.hero h1{margin:8px 0 10px;font-size:30px;line-height:1.2}.hero p{margin:0;line-height:1.7;opacity:.9}.card{margin-top:16px;padding:18px;border:1px solid #dfe8e5;border-radius:18px;background:#fff}.card h2{margin:0 0 8px;font-size:18px}.card p{margin:0 0 14px;color:#58706a;line-height:1.65}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.btn{min-height:48px;border:0;border-radius:12px;padding:12px;background:#eaf3f0;color:#174f43;font-size:15px;font-weight:800}.btn.primary{background:#1b6b55;color:#fff}.btn:disabled{opacity:.5}.status{margin-top:12px;padding:12px;border-radius:12px;background:#eef4f2;color:#45645d;font-size:13px;line-height:1.55}.note{margin-top:16px;color:#71837f;font-size:12px;line-height:1.7}@media(max-width:420px){.grid{grid-template-columns:1fr}.hero h1{font-size:26px}}
+    *{box-sizing:border-box}body{margin:0;background:#f4f7f6;color:#17332e;font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif}.wrap{max-width:720px;margin:auto;padding:24px 18px 48px}.hero{padding:28px 22px;border-radius:22px;background:#163f37;color:white}.eyebrow{font-size:12px;letter-spacing:.14em;opacity:.8}.hero h1{margin:8px 0 10px;font-size:30px;line-height:1.2}.hero p{margin:0;line-height:1.7;opacity:.9}.card{margin-top:16px;padding:18px;border:1px solid #dfe8e5;border-radius:18px;background:#fff}.card h2{margin:0 0 8px;font-size:18px}.card p{margin:0 0 14px;color:#58706a;line-height:1.65}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.btn{min-height:52px;border:0;border-radius:12px;padding:12px;background:#eaf3f0;color:#174f43;font-size:15px;font-weight:800}.btn:disabled{opacity:.5}.status{margin-top:12px;padding:12px;border-radius:12px;background:#eef4f2;color:#45645d;font-size:13px;line-height:1.55}.note{margin-top:16px;color:#71837f;font-size:12px;line-height:1.7}@media(max-width:420px){.grid{grid-template-columns:1fr}.hero h1{font-size:26px}}
   </style>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 </head>
@@ -403,17 +446,17 @@ function renderLiffPage(env) {
   <main class="wrap">
     <section class="hero">
       <div class="eyebrow">JOSON AI CARE ADVISOR</div>
-      <h1>不知道怎麼選照護床？</h1>
-      <p>先告訴我家裡最在意的使用情境，我會從床高、空間、護欄與操作需求開始幫您縮小範圍。</p>
+      <h1>Joson 智慧照護顧問</h1>
+      <p>不知道怎麼選照護床？<br>告訴我們您的使用需求，幫您快速找到適合的方向。</p>
     </section>
     <section class="card">
       <h2>從生活需求開始</h2>
       <p>不用先記型號。點一個最接近的情況，回到 LINE 後我會接著協助。</p>
       <div class="grid">
-        <button class="btn primary" data-message="AI選床">AI 幫我選床</button>
         <button class="btn" data-message="床面希望較低">床面希望較低</button>
         <button class="btn" data-message="房間空間有限">房間空間有限</button>
         <button class="btn" data-message="希望四片護欄">希望四片護欄</button>
+        <button class="btn" data-message="希望較完整操作功能">希望較完整操作功能</button>
       </div>
       <div id="status" class="status">正在連接 LINE…</div>
     </section>
