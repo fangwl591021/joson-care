@@ -48,5 +48,11 @@ test("admin includes protected AI chat monitoring routes", () => {
   assert.match(source, /\/admin\/chat-monitor/);
   assert.match(source, /\/api\/admin\/chat\/threads/);
   assert.match(source, /\/api\/admin\/chat\/insights/);
-  assert.match(source, /規則引擎即時判讀，不使用外部 AI 額度/);
+  assert.match(source, /規則引擎即時判讀/);
+  for (const route of ["/admin/crm", "/admin/products", "/admin/rich-menu", "/admin/settings"]) {
+    assert.match(source, new RegExp(route.replaceAll("/", "\\/")));
+  }
+  for (const section of ["總覽", "CRM", "商品區", "圖文選單", "設定區"]) {
+    assert.match(source, new RegExp(section));
+  }
 });

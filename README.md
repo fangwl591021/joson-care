@@ -41,6 +41,10 @@ npx wrangler secret put ADMIN_ACCESS_KEY
 - `GET /products/:slug` — local product detail page
 - `GET /api/products` — structured product catalog API (`q` and `featured=1` filters supported)
 - `GET /admin` — protected CRM and Rich Menu draft dashboard
+- `GET /admin/crm` — CRM and AI chat monitoring workspace
+- `GET /admin/products` — Traditional Chinese product catalog workspace
+- `GET /admin/rich-menu` — Rich Menu template, project, publish and verification workspace
+- `GET /admin/settings` — read-only LINE, LIFF, D1 and secret-presence status
 - `GET /admin/chat-monitor` — protected mobile-ready CRM / AI chat monitoring dashboard
 - `GET /api/admin/summary` — protected CRM summary API
 - `GET /api/admin/contacts` — protected LINE contact list
@@ -49,6 +53,7 @@ npx wrangler secret put ADMIN_ACCESS_KEY
 - `GET|PATCH /api/admin/chat/threads/:id` — protected conversation timeline and monitor controls
 - `POST /api/admin/chat/threads/:id/read` — mark a conversation as reviewed
 - `POST /api/admin/chat/threads/:id/notes` — add an internal CRM note
+- `GET /api/admin/system/status` — protected non-secret system configuration status
 - `GET /api/admin/rich-menu/definition` — protected Rich Menu draft definition
 
 ## CRM and Admin
