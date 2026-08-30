@@ -15,19 +15,24 @@ const INTENT_RULES = [
 ];
 
 export const DEFAULT_RICH_MENU = Object.freeze({
-  name: "Joson 智慧照護選單 v1",
+  name: "Joson 客製智慧照護選單 v1",
   chatBarText: "Joson 智慧服務",
   selected: true,
   size: { width: 2500, height: 1686 },
   areas: [
-    richMenuArea(0, 0, 833, 843, "AI 幫我選床", "ai_select"),
-    richMenuArea(833, 0, 834, 843, "四款推薦", "featured_products"),
-    richMenuArea(1667, 0, 833, 843, "全部產品", "all_products"),
-    richMenuArea(0, 843, 833, 843, "床型比較", "compare"),
-    richMenuArea(833, 843, 834, 843, "售後服務", "after_sales"),
-    richMenuArea(1667, 843, 833, 843, "聯絡專人", "contact"),
+    richMenuArea(0, 0, 1030, 1686, "智慧選床顧問", "ai_select"),
+    richMenuArea(1030, 0, 1470, 970, "四款居家精選", "featured_products"),
+    richMenuArea(1030, 970, 383, 716, "全系列產品", "all_products"),
+    richMenuArea(1413, 970, 362, 716, "床型比較", "compare"),
+    richMenuArea(1775, 970, 363, 716, "售後服務", "after_sales"),
+    richMenuArea(2138, 970, 362, 716, "專人諮詢", "contact"),
   ],
 });
+
+const RICH_MENU_PROJECT_ID = "joson-care-default";
+const RICH_MENU_TEMPLATE_ID = "joson-custom-asymmetric-v1";
+const RICH_MENU_ALIAS_ID = "joson-care-default";
+const RICH_MENU_IMAGE_PATH = "/assets/rich-menu/joson-care-custom-v1.png";
 
 function richMenuArea(x, y, width, height, label, action) {
   return {
@@ -202,6 +207,11 @@ function summarizeMessages(messages) {
 
 export async function handleAdminRequest(request, env, url) {
   const path = url.pathname;
+  const publishMatch = path.match(/^\/api\/admin\/rich-menu\/projects\/([^/]+)\/publish$/);
+  const maintenanceRoute = (publishMatch && request.method === "POST") || (path === "/api/admin/rich-menu/verify" && request.method === "GET");
+  const maintenanceTokenAuthorized = Boolean(
+    maintenanceRoute && env.RICH_MENU_PUBLISH_TOKEN && isBearerAuthorized(request, env.RICH_MENU_PUBLISH_TOKEN)
+  );
   if (!env.CRM_DB) return adminJson({ error: "crm_not_configured" }, 503);
 
   if (path === "/admin/login") {
@@ -225,7 +235,7 @@ export async function handleAdminRequest(request, env, url) {
     if (path.startsWith("/api/admin/")) return adminJson({ error: "admin_not_configured" }, 503);
     return adminHtml(renderSetupRequired(), 503);
   }
-  if (!(await isAdminAuthorized(request, env.ADMIN_ACCESS_KEY))) {
+  if (!maintenanceTokenAuthorized && !(await isAdminAuthorized(request, env.ADMIN_ACCESS_KEY))) {
     if (path.startsWith("/api/admin/")) return adminJson({ error: "unauthorized" }, 401);
     return new Response(null, { status: 302, headers: { location: "/admin/login" } });
   }
@@ -233,7 +243,12 @@ export async function handleAdminRequest(request, env, url) {
   if (path === "/admin" && request.method === "GET") return adminHtml(renderAdminPage());
   if (path === "/api/admin/summary" && request.method === "GET") return getAdminSummary(env.CRM_DB);
   if (path === "/api/admin/contacts" && request.method === "GET") return getAdminContacts(env.CRM_DB, url);
-  if (path === "/api/admin/rich-menu/definition" && request.method === "GET") return adminJson({ ok: true, status: "draft", definition: DEFAULT_RICH_MENU });
+  if (path === "/api/admin/rich-menu/definition" && request.method === "GET") return adminJson({ ok: true, imagePath: RICH_MENU_IMAGE_PATH, definition: DEFAULT_RICH_MENU });
+  if (path === "/api/admin/rich-menu/templates" && request.method === "GET") return getRichMenuTemplates(env.CRM_DB);
+  if (path === "/api/admin/rich-menu/projects" && request.method === "GET") return getRichMenuProjects(env.CRM_DB);
+  if (path === "/api/admin/rich-menu/status" && request.method === "GET") return getRichMenuStatus(env);
+  if (path === "/api/admin/rich-menu/verify" && request.method === "GET") return verifyRichMenuLive(env, url);
+  if (publishMatch && request.method === "POST") return publishRichMenuProject(env, url, decodeURIComponent(publishMatch[1]));
 
   const detailMatch = path.match(/^\/api\/admin\/contacts\/([^/]+)$/);
   if (detailMatch && request.method === "GET") return getAdminContact(env.CRM_DB, decodeURIComponent(detailMatch[1]));
@@ -242,6 +257,267 @@ export async function handleAdminRequest(request, env, url) {
   if (noteMatch && request.method === "POST") return createAdminNote(request, env.CRM_DB, decodeURIComponent(noteMatch[1]));
 
   return adminJson({ error: "not_found" }, 404);
+}
+
+async function getRichMenuTemplates(db) {
+  const result = await db.prepare("SELECT * FROM rich_menu_templates ORDER BY updated_at DESC").all();
+  return adminJson({ ok: true, templates: result.results || [] });
+}
+
+async function getRichMenuProjects(db) {
+  const result = await db.prepare(`SELECT p.*, t.name AS template_name, v.line_rich_menu_id, v.image_path, v.published_at
+    FROM rich_menu_projects p
+    JOIN rich_menu_templates t ON t.id = p.template_id
+    LEFT JOIN rich_menu_versions v ON v.id = p.current_version_id
+    ORDER BY p.updated_at DESC`).all();
+  return adminJson({ ok: true, projects: result.results || [] });
+}
+
+async function getRichMenuStatus(env) {
+  if (!env.LINE_CHANNEL_ACCESS_TOKEN) return adminJson({ error: "line_access_token_not_configured" }, 503);
+  const current = await getDefaultRichMenu(env.LINE_CHANNEL_ACCESS_TOKEN);
+  const project = await env.CRM_DB.prepare(`SELECT p.*, t.name AS template_name, v.line_rich_menu_id, v.published_at
+    FROM rich_menu_projects p JOIN rich_menu_templates t ON t.id = p.template_id LEFT JOIN rich_menu_versions v ON v.id = p.current_version_id
+    WHERE p.id = ?`).bind(RICH_MENU_PROJECT_ID).first();
+  return adminJson({ ok: true, lineDefault: current, project });
+}
+
+async function verifyRichMenuLive(env, url) {
+  if (!env.LINE_CHANNEL_ACCESS_TOKEN || !env.ASSETS) return adminJson({ error: "rich_menu_verification_not_configured" }, 503);
+  const project = await env.CRM_DB.prepare(`SELECT p.status, p.current_version_id, v.line_rich_menu_id, v.definition_json, v.image_path, v.published_at
+    FROM rich_menu_projects p LEFT JOIN rich_menu_versions v ON v.id = p.current_version_id WHERE p.id = ?`)
+    .bind(RICH_MENU_PROJECT_ID).first();
+  if (!project?.line_rich_menu_id) return adminJson({ error: "rich_menu_not_published" }, 409);
+
+  const current = await getDefaultRichMenu(env.LINE_CHANNEL_ACCESS_TOKEN);
+  const liveDefinition = await lineApiRequest(`https://api.line.me/v2/bot/richmenu/${encodeURIComponent(project.line_rich_menu_id)}`, env.LINE_CHANNEL_ACCESS_TOKEN, {}, true);
+  const lineImageResponse = await fetch(`https://api-data.line.me/v2/bot/richmenu/${encodeURIComponent(project.line_rich_menu_id)}/content`, {
+    headers: { authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}` },
+  });
+  if (!lineImageResponse.ok) throw new Error(`LINE image verification failed: HTTP ${lineImageResponse.status} ${await readTextLimited(lineImageResponse)}`);
+  const lineImage = await lineImageResponse.arrayBuffer();
+  if (lineImage.byteLength > 1_000_000) throw new Error(`LINE image verification exceeded size limit: ${lineImage.byteLength}`);
+  const assetResponse = await env.ASSETS.fetch(new Request(new URL(project.image_path || RICH_MENU_IMAGE_PATH, url.origin)));
+  if (!assetResponse.ok) throw new Error(`Local image verification failed: HTTP ${assetResponse.status}`);
+  const localImage = await assetResponse.arrayBuffer();
+  const [lineSha256, localSha256] = await Promise.all([sha256ArrayBuffer(lineImage), sha256ArrayBuffer(localImage)]);
+  const expectedDefinition = JSON.parse(project.definition_json || "{}");
+  const definitionMatch = canonicalJson(normalizeRichMenuDefinition(liveDefinition)) === canonicalJson(normalizeRichMenuDefinition(expectedDefinition));
+  return adminJson({
+    ok: current.richMenuId === project.line_rich_menu_id && lineSha256 === localSha256 && definitionMatch,
+    projectStatus: project.status,
+    publishedAt: project.published_at,
+    lineDefaultRichMenuId: current.richMenuId,
+    expectedRichMenuId: project.line_rich_menu_id,
+    defaultMatch: current.richMenuId === project.line_rich_menu_id,
+    definitionMatch,
+    imageBytes: lineImage.byteLength,
+    imageSha256: lineSha256,
+    imageShaMatch: lineSha256 === localSha256,
+  });
+}
+
+function normalizeRichMenuDefinition(value) {
+  return {
+    size: value?.size,
+    selected: value?.selected,
+    name: value?.name,
+    chatBarText: value?.chatBarText,
+    areas: value?.areas,
+  };
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+async function sha256ArrayBuffer(value) {
+  const digest = await crypto.subtle.digest("SHA-256", value);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function publishRichMenuProject(env, url, projectId) {
+  if (projectId !== RICH_MENU_PROJECT_ID) return adminJson({ error: "project_not_found" }, 404);
+  if (!env.LINE_CHANNEL_ACCESS_TOKEN) return adminJson({ error: "line_access_token_not_configured" }, 503);
+  if (!env.ASSETS) return adminJson({ error: "assets_binding_not_configured" }, 503);
+
+  const project = await env.CRM_DB.prepare("SELECT * FROM rich_menu_projects WHERE id = ?").bind(projectId).first();
+  if (!project) return adminJson({ error: "project_not_found" }, 404);
+
+  const now = new Date().toISOString();
+  const runId = crypto.randomUUID();
+  const versionId = crypto.randomUUID();
+  let newRichMenuId = null;
+  let previousRichMenuId = null;
+  const claimed = await env.CRM_DB.prepare("UPDATE rich_menu_projects SET status = 'publishing', updated_at = ? WHERE id = ? AND status <> 'publishing'")
+    .bind(now, projectId).run();
+  if (Number(claimed?.meta?.changes || 0) !== 1) return adminJson({ error: "publish_already_running" }, 409);
+
+  try {
+    await env.CRM_DB.batch([
+      env.CRM_DB.prepare(`INSERT INTO rich_menu_versions
+        (id, name, audience_stage, alias_id, definition_json, image_path, status, created_at, updated_at)
+        VALUES (?, ?, 'default', ?, ?, ?, 'draft', ?, ?)`)
+        .bind(versionId, DEFAULT_RICH_MENU.name, RICH_MENU_ALIAS_ID, JSON.stringify(DEFAULT_RICH_MENU), RICH_MENU_IMAGE_PATH, now, now),
+      env.CRM_DB.prepare(`INSERT INTO rich_menu_publish_runs
+        (id, project_id, version_id, stage, status, started_at)
+        VALUES (?, ?, ?, 'prepare', 'running', ?)`)
+        .bind(runId, projectId, versionId, now),
+    ]);
+    const current = await getDefaultRichMenu(env.LINE_CHANNEL_ACCESS_TOKEN);
+    previousRichMenuId = current.richMenuId || null;
+    await updatePublishRun(env.CRM_DB, runId, "validate", previousRichMenuId, null);
+    await lineApiRequest("https://api.line.me/v2/bot/richmenu/validate", env.LINE_CHANNEL_ACCESS_TOKEN, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(DEFAULT_RICH_MENU),
+    });
+
+    await updatePublishRun(env.CRM_DB, runId, "create", previousRichMenuId, null);
+    const created = await lineApiRequest("https://api.line.me/v2/bot/richmenu", env.LINE_CHANNEL_ACCESS_TOKEN, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(DEFAULT_RICH_MENU),
+    }, true);
+    newRichMenuId = String(created.richMenuId || "");
+    if (!newRichMenuId) throw new Error("LINE did not return a Rich Menu ID");
+
+    await updatePublishRun(env.CRM_DB, runId, "upload", previousRichMenuId, newRichMenuId);
+    const assetUrl = new URL(RICH_MENU_IMAGE_PATH, url.origin);
+    const assetResponse = await env.ASSETS.fetch(new Request(assetUrl));
+    if (!assetResponse.ok) throw new Error(`Rich Menu image asset unavailable: HTTP ${assetResponse.status}`);
+    const imageBytes = await assetResponse.arrayBuffer();
+    if (!imageBytes.byteLength || imageBytes.byteLength > 1_000_000) throw new Error(`Rich Menu image size invalid: ${imageBytes.byteLength}`);
+    await lineApiRequest(`https://api-data.line.me/v2/bot/richmenu/${encodeURIComponent(newRichMenuId)}/content`, env.LINE_CHANNEL_ACCESS_TOKEN, {
+      method: "POST",
+      headers: { "content-type": "image/png" },
+      body: imageBytes,
+    });
+    await env.CRM_DB.prepare("UPDATE rich_menu_versions SET line_rich_menu_id = ?, status = 'uploaded', updated_at = ? WHERE id = ?")
+      .bind(newRichMenuId, new Date().toISOString(), versionId).run();
+
+    await updatePublishRun(env.CRM_DB, runId, "alias", previousRichMenuId, newRichMenuId);
+    await upsertRichMenuAlias(env.LINE_CHANNEL_ACCESS_TOKEN, RICH_MENU_ALIAS_ID, newRichMenuId);
+
+    await updatePublishRun(env.CRM_DB, runId, "set_default", previousRichMenuId, newRichMenuId);
+    await lineApiRequest(`https://api.line.me/v2/bot/user/all/richmenu/${encodeURIComponent(newRichMenuId)}`, env.LINE_CHANNEL_ACCESS_TOKEN, { method: "POST" });
+
+    await updatePublishRun(env.CRM_DB, runId, "verify", previousRichMenuId, newRichMenuId);
+    await verifyDefaultRichMenu(env.LINE_CHANNEL_ACCESS_TOKEN, newRichMenuId);
+
+    const finishedAt = new Date().toISOString();
+    await env.CRM_DB.batch([
+      env.CRM_DB.prepare("UPDATE rich_menu_versions SET status = 'retired', updated_at = ? WHERE status = 'active' AND id <> ?").bind(finishedAt, versionId),
+      env.CRM_DB.prepare("UPDATE rich_menu_versions SET status = 'active', published_at = ?, updated_at = ? WHERE id = ?").bind(finishedAt, finishedAt, versionId),
+      env.CRM_DB.prepare("UPDATE rich_menu_projects SET status = 'published', current_version_id = ?, updated_at = ? WHERE id = ?").bind(versionId, finishedAt, projectId),
+      env.CRM_DB.prepare("UPDATE rich_menu_publish_runs SET stage = 'verified', status = 'succeeded', previous_line_rich_menu_id = ?, new_line_rich_menu_id = ?, finished_at = ? WHERE id = ?").bind(previousRichMenuId, newRichMenuId, finishedAt, runId),
+      env.CRM_DB.prepare("INSERT INTO admin_audit_logs (id, actor, action, target_type, target_id, detail_json, created_at) VALUES (?, 'admin', 'rich_menu.publish', 'rich_menu_project', ?, ?, ?)")
+        .bind(crypto.randomUUID(), projectId, JSON.stringify({ versionId, previousRichMenuId, newRichMenuId }), finishedAt),
+    ]);
+
+    const cleanup = await cleanupOldRichMenu(env.LINE_CHANNEL_ACCESS_TOKEN, previousRichMenuId, newRichMenuId);
+    return adminJson({ ok: true, projectId, versionId, previousRichMenuId, newRichMenuId, verified: true, cleanup });
+  } catch (error) {
+    const finishedAt = new Date().toISOString();
+    const safeMessage = String(error?.message || error).slice(0, 500);
+    await env.CRM_DB.batch([
+      env.CRM_DB.prepare("UPDATE rich_menu_versions SET line_rich_menu_id = ?, status = 'failed', updated_at = ? WHERE id = ?").bind(newRichMenuId, finishedAt, versionId),
+      env.CRM_DB.prepare("UPDATE rich_menu_projects SET status = 'failed', updated_at = ? WHERE id = ?").bind(finishedAt, projectId),
+      env.CRM_DB.prepare("UPDATE rich_menu_publish_runs SET stage = 'failed', status = 'failed', previous_line_rich_menu_id = ?, new_line_rich_menu_id = ?, error_message = ?, finished_at = ? WHERE id = ?")
+        .bind(previousRichMenuId, newRichMenuId, safeMessage, finishedAt, runId),
+    ]).catch(() => undefined);
+    console.error(JSON.stringify({ level: "error", message: "Rich Menu publish failed", projectId, runId, error: safeMessage }));
+    return adminJson({ error: "rich_menu_publish_failed", message: safeMessage, runId }, 502);
+  }
+}
+
+async function updatePublishRun(db, runId, stage, previousId, newId) {
+  await db.prepare("UPDATE rich_menu_publish_runs SET stage = ?, previous_line_rich_menu_id = ?, new_line_rich_menu_id = ? WHERE id = ?")
+    .bind(stage, previousId || null, newId || null, runId).run();
+}
+
+async function getDefaultRichMenu(accessToken) {
+  const response = await fetch("https://api.line.me/v2/bot/user/all/richmenu", { headers: { authorization: `Bearer ${accessToken}` } });
+  if (response.status === 404) return { source: "none", richMenuId: null };
+  if (response.status === 403) return { source: "manager_or_other_channel", richMenuId: null };
+  if (!response.ok) throw new Error(`LINE get default failed: HTTP ${response.status} ${await readTextLimited(response)}`);
+  const data = await response.json();
+  return { source: "messaging_api", richMenuId: String(data.richMenuId || "") || null };
+}
+
+async function upsertRichMenuAlias(accessToken, aliasId, richMenuId) {
+  const lookup = await fetch(`https://api.line.me/v2/bot/richmenu/alias/${encodeURIComponent(aliasId)}`, { headers: { authorization: `Bearer ${accessToken}` } });
+  if (lookup.ok) {
+    await lineApiRequest(`https://api.line.me/v2/bot/richmenu/alias/${encodeURIComponent(aliasId)}`, accessToken, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ richMenuId }),
+    });
+    return;
+  }
+  if (lookup.status !== 404) throw new Error(`LINE alias lookup failed: HTTP ${lookup.status} ${await readTextLimited(lookup)}`);
+  await lineApiRequest("https://api.line.me/v2/bot/richmenu/alias", accessToken, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ richMenuAliasId: aliasId, richMenuId }),
+  });
+}
+
+async function verifyDefaultRichMenu(accessToken, expectedId) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const current = await getDefaultRichMenu(accessToken);
+    if (current.richMenuId === expectedId) return;
+    await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+  }
+  throw new Error("LINE default Rich Menu verification timed out");
+}
+
+async function cleanupOldRichMenu(accessToken, previousId, currentId) {
+  if (!previousId || previousId === currentId) return { attempted: false, reason: "no_previous_menu" };
+  try {
+    const aliases = await lineApiRequest("https://api.line.me/v2/bot/richmenu/alias/list", accessToken, {}, true);
+    const referenced = (aliases.richMenuAliases || []).some((alias) => alias.richMenuId === previousId);
+    if (referenced) return { attempted: false, reason: "previous_menu_has_alias" };
+    await lineApiRequest(`https://api.line.me/v2/bot/richmenu/${encodeURIComponent(previousId)}`, accessToken, { method: "DELETE" });
+    return { attempted: true, deleted: true };
+  } catch (error) {
+    return { attempted: true, deleted: false, error: String(error?.message || error).slice(0, 200) };
+  }
+}
+
+async function lineApiRequest(endpoint, accessToken, init = {}, parseJson = false) {
+  const headers = new Headers(init.headers || {});
+  headers.set("authorization", `Bearer ${accessToken}`);
+  const response = await fetch(endpoint, { ...init, headers });
+  if (!response.ok) throw new Error(`LINE API failed: HTTP ${response.status} ${await readTextLimited(response)}`);
+  if (!parseJson) return null;
+  return response.json();
+}
+
+async function readTextLimited(response, maxBytes = 8192) {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (total < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const remaining = maxBytes - total;
+      chunks.push(value.slice(0, remaining));
+      total += Math.min(value.byteLength, remaining);
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { merged.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder().decode(merged);
 }
 
 async function getAdminSummary(db) {
@@ -319,6 +595,11 @@ async function isAdminAuthorized(request, secret) {
   return verifyAdminSession(session, secret);
 }
 
+function isBearerAuthorized(request, secret) {
+  const authorization = request.headers.get("authorization") || "";
+  return authorization.startsWith("Bearer ") && timingSafeTextEqual(authorization.slice(7), secret);
+}
+
 async function createAdminSession(secret) {
   const issuedAt = Math.floor(Date.now() / 1000);
   return `${issuedAt}.${await hmacBase64Url(String(issuedAt), secret)}`;
@@ -374,18 +655,19 @@ function renderSetupRequired() {
 }
 
 function renderAdminPage() {
-  const menuTiles = ["AI 幫我選床", "四款推薦", "全部產品", "床型比較", "售後服務", "聯絡專人"].map((label) => `<div>${label}</div>`).join("");
-  return page("Joson CRM", `<header><div><div class="eyebrow">JOSON CARE OPERATIONS</div><h1>CRM 與智能圖文選單</h1></div><form method="post" action="/admin/logout"><button class="secondary">登出</button></form></header><main><section class="stats" id="stats"><div class="stat">載入中…</div></section><section class="layout"><div class="panel"><div class="section-title"><h2>最近會員</h2><button class="secondary" onclick="loadContacts()">重新整理</button></div><div class="table-wrap"><table><thead><tr><th>會員</th><th>階段</th><th>標籤</th><th>最後訊息</th><th>時間</th></tr></thead><tbody id="contacts"><tr><td colspan="5">載入中…</td></tr></tbody></table></div></div><aside class="panel"><div class="eyebrow">RICH MENU DRAFT</div><h2>第一版六宮格</h2><div class="menu-preview">${menuTiles}</div><p class="muted">目前只建立草稿定義，尚未發布或替換 LINE 現有選單。</p></aside></section></main><script>
+  return page("Joson CRM", `<header><div><div class="eyebrow">JOSON CARE OPERATIONS</div><h1>CRM 與智能圖文選單</h1></div><form method="post" action="/admin/logout"><button class="secondary">登出</button></form></header><main><section class="stats" id="stats"><div class="stat">載入中…</div></section><section class="layout"><div class="panel"><div class="section-title"><h2>最近會員</h2><button class="secondary" onclick="loadContacts()">重新整理</button></div><div class="table-wrap"><table><thead><tr><th>會員</th><th>階段</th><th>標籤</th><th>最後訊息</th><th>時間</th></tr></thead><tbody id="contacts"><tr><td colspan="5">載入中…</td></tr></tbody></table></div></div><aside class="panel"><div class="eyebrow">CUSTOM RICH MENU</div><h2>Joson 客製智慧選單</h2><img class="menu-preview" src="${RICH_MENU_IMAGE_PATH}" alt="Joson 客製智能圖文選單預覽"><div id="menu-status" class="menu-status">正在讀取專案狀態…</div><button id="publish-button" onclick="publishMenu()">發布此專案</button><p class="muted">不對稱主視覺：智慧選床為主要入口，搭配四款產品實圖與服務捷徑。發布時會先建立、上傳並驗證新版，再處理舊版。</p></aside></section></main><script>
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const date=v=>v?new Date(v).toLocaleString('zh-TW'):'—';
 async function loadSummary(){const r=await fetch('/api/admin/summary');if(r.status===401)return location.href='/admin/login';const d=await r.json();document.getElementById('stats').innerHTML=[['會員總數',d.contacts],['7 日活躍',d.active7d],['進行中商機',d.openLeads],['未讀對話',d.unreadThreads]].map(x=>'<div class="stat"><strong>'+e(x[1])+'</strong><span>'+e(x[0])+'</span></div>').join('')}
 async function loadContacts(){const r=await fetch('/api/admin/contacts?limit=50');if(r.status===401)return location.href='/admin/login';const d=await r.json();document.getElementById('contacts').innerHTML=d.contacts.length?d.contacts.map(c=>'<tr><td><code>'+e(c.line_user_id.slice(0,8))+'…</code></td><td><span class="badge">'+e(c.lifecycle_stage)+'</span></td><td>'+e(c.tags||'—')+'</td><td>'+e(c.last_message_preview||'—')+'</td><td>'+e(date(c.last_message_at||c.last_seen_at))+'</td></tr>').join(''):'<tr><td colspan="5">尚無會員互動資料。請先從 LINE 傳送一則訊息。</td></tr>'}
-loadSummary();loadContacts();
+async function loadMenu(){const r=await fetch('/api/admin/rich-menu/status');if(r.status===401)return location.href='/admin/login';const d=await r.json();const p=d.project||{};document.getElementById('menu-status').innerHTML='<strong>'+e(p.status||'draft')+'</strong><span>模板：'+e(p.template_name||'—')+'</span><span>專案：'+e(p.name||'—')+'</span><span>LINE：'+e(d.lineDefault?.richMenuId||'尚無 Messaging API 預設選單')+'</span>'}
+async function publishMenu(){if(!confirm('確定發布 Joson 客製圖文選單？新版驗證完成前不會移除舊版。'))return;const b=document.getElementById('publish-button');b.disabled=true;b.textContent='發布中…';const r=await fetch('/api/admin/rich-menu/projects/${RICH_MENU_PROJECT_ID}/publish',{method:'POST'});const d=await r.json();if(!r.ok){alert('發布失敗：'+(d.message||d.error));b.disabled=false;b.textContent='重新發布';return}alert('發布並驗證成功：'+d.newRichMenuId);b.textContent='發布成功';loadMenu()}
+loadSummary();loadContacts();loadMenu();
 </script>`);
 }
 
 function page(title, body) {
-  return `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>*{box-sizing:border-box}body{margin:0;background:#f3f6f5;color:#17332e;font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif}header{display:flex;justify-content:space-between;align-items:center;padding:22px max(20px,calc((100vw - 1180px)/2));background:#153f37;color:#fff}h1,h2{margin:4px 0 12px}.eyebrow{font-size:12px;letter-spacing:.14em;color:#7bbca9;font-weight:800}main{max-width:1180px;margin:auto;padding:24px}.login{max-width:520px;padding-top:10vh}.panel{background:#fff;border:1px solid #dce6e3;border-radius:18px;padding:20px;box-shadow:0 8px 28px rgba(20,63,55,.06)}label{display:grid;gap:8px;font-weight:700}input{width:100%;padding:13px;border:1px solid #bfd1cc;border-radius:10px;font:inherit}button{border:0;border-radius:10px;background:#1b6b55;color:#fff;padding:11px 16px;font-weight:800;cursor:pointer}form{display:grid;gap:14px}.secondary{background:#e5efec;color:#174f43}.error{background:#fff1f1;color:#9b2c2c;padding:10px;border-radius:8px;margin:12px 0}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}.stat{background:#fff;border:1px solid #dce6e3;border-radius:15px;padding:18px}.stat strong{display:block;font-size:30px}.stat span,.muted{color:#657a74}.layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(280px,1fr);gap:18px}.section-title{display:flex;justify-content:space-between;align-items:center}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 8px;border-bottom:1px solid #e7eeec;vertical-align:top}th{font-size:12px;color:#657a74}.badge{padding:4px 8px;border-radius:999px;background:#e5f1ed;color:#175b49;font-size:12px}.menu-preview{display:grid;grid-template-columns:repeat(3,1fr);aspect-ratio:2500/1686;border:5px solid #163f37;border-radius:12px;overflow:hidden}.menu-preview div{display:grid;place-items:center;text-align:center;padding:8px;background:#eaf3f0;border:1px solid #c9ded8;color:#174f43;font-weight:800}code{font-size:12px}@media(max-width:800px){.stats{grid-template-columns:1fr 1fr}.layout{grid-template-columns:1fr}header{padding:18px}main{padding:16px}}@media(max-width:480px){.stats{grid-template-columns:1fr 1fr}.stat strong{font-size:24px}}</style></head><body>${body}</body></html>`;
+  return `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>*{box-sizing:border-box}body{margin:0;background:#f3f6f5;color:#17332e;font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif}header{display:flex;justify-content:space-between;align-items:center;padding:22px max(20px,calc((100vw - 1180px)/2));background:#153f37;color:#fff}h1,h2{margin:4px 0 12px}.eyebrow{font-size:12px;letter-spacing:.14em;color:#7bbca9;font-weight:800}main{max-width:1180px;margin:auto;padding:24px}.login{max-width:520px;padding-top:10vh}.panel{background:#fff;border:1px solid #dce6e3;border-radius:18px;padding:20px;box-shadow:0 8px 28px rgba(20,63,55,.06)}label{display:grid;gap:8px;font-weight:700}input{width:100%;padding:13px;border:1px solid #bfd1cc;border-radius:10px;font:inherit}button{border:0;border-radius:10px;background:#1b6b55;color:#fff;padding:11px 16px;font-weight:800;cursor:pointer}button:disabled{opacity:.55;cursor:wait}form{display:grid;gap:14px}.secondary{background:#e5efec;color:#174f43}.error{background:#fff1f1;color:#9b2c2c;padding:10px;border-radius:8px;margin:12px 0}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}.stat{background:#fff;border:1px solid #dce6e3;border-radius:15px;padding:18px}.stat strong{display:block;font-size:30px}.stat span,.muted{color:#657a74}.layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(300px,1fr);gap:18px}.section-title{display:flex;justify-content:space-between;align-items:center}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 8px;border-bottom:1px solid #e7eeec;vertical-align:top}th{font-size:12px;color:#657a74}.badge{padding:4px 8px;border-radius:999px;background:#e5f1ed;color:#175b49;font-size:12px}.menu-preview{display:block;width:100%;aspect-ratio:2500/1686;object-fit:contain;border:4px solid #163f37;border-radius:12px;background:#eef4f2;margin:12px 0}.menu-status{display:grid;gap:3px;padding:12px;margin:12px 0;border-radius:10px;background:#edf5f2}.menu-status strong{text-transform:uppercase;color:#175b49}.menu-status span{font-size:12px;color:#657a74;overflow-wrap:anywhere}code{font-size:12px}@media(max-width:800px){.stats{grid-template-columns:1fr 1fr}.layout{grid-template-columns:1fr}header{padding:18px}main{padding:16px}}@media(max-width:480px){.stats{grid-template-columns:1fr 1fr}.stat strong{font-size:24px}}</style></head><body>${body}</body></html>`;
 }
 
 function escapeHtml(value) {

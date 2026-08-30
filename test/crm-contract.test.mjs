@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 import { DEFAULT_RICH_MENU, postbackToText } from "../crm.js";
 
-test("default Rich Menu has six valid postback areas", () => {
+test("custom Rich Menu uses an asymmetric primary area and valid postbacks", () => {
   assert.deepEqual(DEFAULT_RICH_MENU.size, { width: 2500, height: 1686 });
   assert.equal(DEFAULT_RICH_MENU.areas.length, 6);
+  assert.deepEqual(DEFAULT_RICH_MENU.areas[0].bounds, { x: 0, y: 0, width: 1030, height: 1686 });
+  assert.deepEqual(DEFAULT_RICH_MENU.areas[1].bounds, { x: 1030, y: 0, width: 1470, height: 970 });
+  assert.ok(DEFAULT_RICH_MENU.areas[0].bounds.width > DEFAULT_RICH_MENU.areas[2].bounds.width * 2);
   for (const area of DEFAULT_RICH_MENU.areas) {
     assert.equal(area.action.type, "postback");
     assert.match(area.action.data, /source=rich_menu_default/);
@@ -12,6 +16,14 @@ test("default Rich Menu has six valid postback areas", () => {
     assert.ok(area.bounds.x + area.bounds.width <= DEFAULT_RICH_MENU.size.width);
     assert.ok(area.bounds.y + area.bounds.height <= DEFAULT_RICH_MENU.size.height);
   }
+});
+
+test("custom Rich Menu PNG meets LINE dimensions and file-size limit", () => {
+  const image = fs.readFileSync(new URL("../public/assets/rich-menu/joson-care-custom-v1.png", import.meta.url));
+  assert.equal(image.toString("ascii", 1, 4), "PNG");
+  assert.equal(image.readUInt32BE(16), 2500);
+  assert.equal(image.readUInt32BE(20), 1686);
+  assert.ok(image.byteLength > 0 && image.byteLength <= 1_000_000);
 });
 
 test("Rich Menu actions route into existing conversation commands", () => {

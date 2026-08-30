@@ -56,7 +56,15 @@ npx wrangler d1 migrations list joson-care-crm --remote
 npx wrangler d1 migrations apply joson-care-crm --remote
 ```
 
-`/admin` stays unavailable until `ADMIN_ACCESS_KEY` is configured as a Worker Secret. The initial Rich Menu definition is a protected draft only; publishing or replacing the LINE default menu is a separate verified operation.
+`/admin` stays unavailable until `ADMIN_ACCESS_KEY` is configured as a Worker Secret. Rich Menu templates, projects, versions and publish runs are stored in D1. The Joson default project uses a custom asymmetric layout with a large smart-advisor entry, four real product images and a service rail instead of a stock six-grid template.
+
+Regenerate its deterministic PNG after an intentional visual change:
+
+```powershell
+& "C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" scripts\render-rich-menu.py
+```
+
+The Admin publish action validates the definition, creates a new LINE Rich Menu, uploads the PNG, updates its stable alias, sets it as default and verifies the live default before any best-effort cleanup of the prior menu.
 
 ## Local product snapshot
 
