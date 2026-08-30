@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
-import { DEFAULT_RICH_MENU, postbackToText } from "../crm.js";
+import { DEFAULT_RICH_MENU, monitorPriorityForIntent, postbackToText } from "../crm.js";
 
 test("custom Rich Menu uses an asymmetric primary area and valid postbacks", () => {
   assert.deepEqual(DEFAULT_RICH_MENU.size, { width: 2500, height: 1686 });
@@ -33,4 +33,20 @@ test("Rich Menu actions route into existing conversation commands", () => {
   assert.equal(postbackToText("action=compare&source=rich_menu_default"), "床型比較");
   assert.equal(postbackToText("action=after_sales&source=rich_menu_default"), "售後服務");
   assert.equal(postbackToText("action=contact&source=rich_menu_default"), "請專人聯絡");
+});
+
+test("chat monitor prioritizes actionable CRM intents", () => {
+  assert.equal(monitorPriorityForIntent("contact_request"), 3);
+  assert.equal(monitorPriorityForIntent("procurement"), 3);
+  assert.equal(monitorPriorityForIntent("after_sales"), 2);
+  assert.equal(monitorPriorityForIntent("low_bed"), 1);
+  assert.equal(monitorPriorityForIntent("general_message"), 0);
+});
+
+test("admin includes protected AI chat monitoring routes", () => {
+  const source = fs.readFileSync(new URL("../crm.js", import.meta.url), "utf8");
+  assert.match(source, /\/admin\/chat-monitor/);
+  assert.match(source, /\/api\/admin\/chat\/threads/);
+  assert.match(source, /\/api\/admin\/chat\/insights/);
+  assert.match(source, /規則引擎即時判讀，不使用外部 AI 額度/);
 });

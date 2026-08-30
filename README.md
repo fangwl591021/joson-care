@@ -41,13 +41,21 @@ npx wrangler secret put ADMIN_ACCESS_KEY
 - `GET /products/:slug` — local product detail page
 - `GET /api/products` — structured product catalog API (`q` and `featured=1` filters supported)
 - `GET /admin` — protected CRM and Rich Menu draft dashboard
+- `GET /admin/chat-monitor` — protected mobile-ready CRM / AI chat monitoring dashboard
 - `GET /api/admin/summary` — protected CRM summary API
 - `GET /api/admin/contacts` — protected LINE contact list
+- `GET /api/admin/chat/insights` — protected unread, priority and intent monitoring summary
+- `GET /api/admin/chat/threads` — protected filterable LINE conversation list
+- `GET|PATCH /api/admin/chat/threads/:id` — protected conversation timeline and monitor controls
+- `POST /api/admin/chat/threads/:id/read` — mark a conversation as reviewed
+- `POST /api/admin/chat/threads/:id/notes` — add an internal CRM note
 - `GET /api/admin/rich-menu/definition` — protected Rich Menu draft definition
 
 ## CRM and Admin
 
 CRM data is stored in the `joson-care-crm` D1 database through the `CRM_DB` binding. LINE webhook replies remain on the critical path; contact, message, intent, recommendation and lead records are written with `ctx.waitUntil()` after the reply attempt.
+
+The AI chat monitor uses the existing deterministic intent rules to classify needs, recommended models and follow-up priority. It does not call an external AI model or consume a separate AI quota. The monitor refreshes every 15 seconds and supports unread, priority, lifecycle and status filters, full inbound/outbound timelines, assignment, review state and private notes.
 
 Run migrations locally before development and remotely only after reviewing the pending list:
 

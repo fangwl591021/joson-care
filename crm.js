@@ -116,6 +116,15 @@ export async function recordLineInteraction(env, event, inputText, replyMessages
         last_message_at = excluded.last_message_at,
         updated_at = excluded.updated_at`)
       .bind(threadId, contactId, inputText ? 1 : 0, preview, occurredAt, now, now),
+    env.CRM_DB.prepare(`INSERT INTO crm_thread_monitor_state
+      (thread_id, priority, last_intent, last_product_model, analysis_mode, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'rule_based', ?, ?)
+      ON CONFLICT(thread_id) DO UPDATE SET
+        priority = MAX(crm_thread_monitor_state.priority, excluded.priority),
+        last_intent = COALESCE(excluded.last_intent, crm_thread_monitor_state.last_intent),
+        last_product_model = COALESCE(excluded.last_product_model, crm_thread_monitor_state.last_product_model),
+        updated_at = excluded.updated_at`)
+      .bind(threadId, monitorPriorityForIntent(classification.intent), classification.intent || null, classification.productModel || null, now, now),
   ];
 
   if (inputText) {
@@ -192,6 +201,13 @@ function classifyIntent(input) {
   return matched || { intent: eventIntentFallback(text), tagId: null, productModel: null, stage: "new", createLead: false };
 }
 
+export function monitorPriorityForIntent(intent) {
+  if (intent === "contact_request" || intent === "procurement") return 3;
+  if (intent === "after_sales") return 2;
+  if (["low_bed", "space_saving", "four_rail", "professional_controls", "start_advisor", "compare_products", "browse_products"].includes(intent)) return 1;
+  return 0;
+}
+
 function eventIntentFallback(text) {
   return text ? "general_message" : "line_event";
 }
@@ -208,6 +224,9 @@ function summarizeMessages(messages) {
 export async function handleAdminRequest(request, env, url) {
   const path = url.pathname;
   const publishMatch = path.match(/^\/api\/admin\/rich-menu\/projects\/([^/]+)\/publish$/);
+  const chatThreadMatch = path.match(/^\/api\/admin\/chat\/threads\/([^/]+)$/);
+  const chatReadMatch = path.match(/^\/api\/admin\/chat\/threads\/([^/]+)\/read$/);
+  const chatNoteMatch = path.match(/^\/api\/admin\/chat\/threads\/([^/]+)\/notes$/);
   const maintenanceRoute = (publishMatch && request.method === "POST") || (path === "/api/admin/rich-menu/verify" && request.method === "GET");
   const maintenanceTokenAuthorized = Boolean(
     maintenanceRoute && env.RICH_MENU_PUBLISH_TOKEN && isBearerAuthorized(request, env.RICH_MENU_PUBLISH_TOKEN)
@@ -241,8 +260,15 @@ export async function handleAdminRequest(request, env, url) {
   }
 
   if (path === "/admin" && request.method === "GET") return adminHtml(renderAdminPage());
+  if (path === "/admin/chat-monitor" && request.method === "GET") return adminHtml(renderChatMonitorPage());
   if (path === "/api/admin/summary" && request.method === "GET") return getAdminSummary(env.CRM_DB);
   if (path === "/api/admin/contacts" && request.method === "GET") return getAdminContacts(env.CRM_DB, url);
+  if (path === "/api/admin/chat/insights" && request.method === "GET") return getChatInsights(env.CRM_DB);
+  if (path === "/api/admin/chat/threads" && request.method === "GET") return getChatThreads(env.CRM_DB, url);
+  if (chatReadMatch && request.method === "POST") return markChatThreadRead(env.CRM_DB, decodeURIComponent(chatReadMatch[1]));
+  if (chatNoteMatch && request.method === "POST") return createChatThreadNote(request, env.CRM_DB, decodeURIComponent(chatNoteMatch[1]));
+  if (chatThreadMatch && request.method === "GET") return getChatThread(env.CRM_DB, decodeURIComponent(chatThreadMatch[1]));
+  if (chatThreadMatch && request.method === "PATCH") return updateChatThread(request, env.CRM_DB, decodeURIComponent(chatThreadMatch[1]));
   if (path === "/api/admin/rich-menu/definition" && request.method === "GET") return adminJson({ ok: true, imagePath: RICH_MENU_IMAGE_PATH, definition: DEFAULT_RICH_MENU });
   if (path === "/api/admin/rich-menu/templates" && request.method === "GET") return getRichMenuTemplates(env.CRM_DB);
   if (path === "/api/admin/rich-menu/projects" && request.method === "GET") return getRichMenuProjects(env.CRM_DB);
@@ -536,6 +562,150 @@ async function getAdminSummary(db) {
   });
 }
 
+async function getChatInsights(db) {
+  const results = await db.batch([
+    db.prepare("SELECT COUNT(*) AS count FROM crm_threads WHERE unread_count > 0"),
+    db.prepare("SELECT COUNT(*) AS count FROM crm_thread_monitor_state WHERE priority >= 2"),
+    db.prepare("SELECT COUNT(*) AS count FROM crm_threads WHERE status IN ('open', 'pending')"),
+    db.prepare("SELECT COUNT(*) AS count FROM crm_messages WHERE direction = 'inbound' AND sent_at >= datetime('now', '-7 days')"),
+    db.prepare(`SELECT COALESCE(intent, 'general_message') AS intent, COUNT(*) AS count
+      FROM crm_events WHERE occurred_at >= datetime('now', '-30 days')
+      GROUP BY COALESCE(intent, 'general_message') ORDER BY count DESC LIMIT 6`),
+    db.prepare(`SELECT product_model, COUNT(*) AS count FROM crm_events
+      WHERE product_model IS NOT NULL AND occurred_at >= datetime('now', '-30 days')
+      GROUP BY product_model ORDER BY count DESC LIMIT 6`),
+  ]);
+  return adminJson({
+    ok: true,
+    unreadThreads: numberFromResult(results[0]),
+    highPriority: numberFromResult(results[1]),
+    activeThreads: numberFromResult(results[2]),
+    inbound7d: numberFromResult(results[3]),
+    topIntents: results[4].results || [],
+    topProducts: results[5].results || [],
+    analysisMode: "rule_based",
+  });
+}
+
+async function getChatThreads(db, url) {
+  const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 60), 1), 100);
+  const query = String(url.searchParams.get("q") || "").trim().slice(0, 120);
+  const stage = String(url.searchParams.get("stage") || "").trim();
+  const intent = String(url.searchParams.get("intent") || "").trim();
+  const status = String(url.searchParams.get("status") || "").trim();
+  const priorityRaw = String(url.searchParams.get("priority") || "").trim();
+  const unread = url.searchParams.get("unread") === "1";
+  const conditions = [];
+  const values = [];
+  if (["new", "selecting", "lead", "customer", "after_sales", "inactive"].includes(stage)) { conditions.push("c.lifecycle_stage = ?"); values.push(stage); }
+  if (["open", "pending", "closed"].includes(status)) { conditions.push("t.status = ?"); values.push(status); }
+  if (intent) { conditions.push("m.last_intent = ?"); values.push(intent); }
+  if (/^[0-3]$/.test(priorityRaw)) { conditions.push("COALESCE(m.priority, 0) = ?"); values.push(Number(priorityRaw)); }
+  if (unread) conditions.push("t.unread_count > 0");
+  if (query) {
+    const needle = `%${query}%`;
+    conditions.push("(c.display_name LIKE ? OR c.line_user_id LIKE ? OR t.last_message_preview LIKE ? OR m.last_product_model LIKE ?)");
+    values.push(needle, needle, needle, needle);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const result = await db.prepare(`SELECT
+      t.id, t.status, t.unread_count, t.last_message_preview, t.last_message_at,
+      c.id AS contact_id, c.line_user_id, c.display_name, c.picture_url, c.friend_status, c.lifecycle_stage,
+      COALESCE(m.priority, 0) AS priority, m.assigned_to, m.last_intent, m.last_product_model,
+      m.analysis_mode, m.reviewed_at,
+      (SELECT GROUP_CONCAT(tag.name, ', ') FROM crm_contact_tags ct JOIN crm_tags tag ON tag.id = ct.tag_id WHERE ct.contact_id = c.id) AS tags,
+      (SELECT l.status FROM crm_leads l WHERE l.contact_id = c.id ORDER BY l.updated_at DESC LIMIT 1) AS lead_status
+    FROM crm_threads t
+    JOIN crm_contacts c ON c.id = t.contact_id
+    LEFT JOIN crm_thread_monitor_state m ON m.thread_id = t.id
+    ${where}
+    ORDER BY COALESCE(m.priority, 0) DESC, t.unread_count DESC, t.last_message_at DESC
+    LIMIT ?`).bind(...values, limit).all();
+  return adminJson({ ok: true, threads: result.results || [] });
+}
+
+async function getChatThread(db, threadId) {
+  const results = await db.batch([
+    db.prepare(`SELECT t.*, c.line_user_id, c.display_name, c.picture_url, c.friend_status, c.lifecycle_stage,
+      COALESCE(m.priority, 0) AS priority, m.assigned_to, m.last_intent, m.last_product_model, m.analysis_mode, m.reviewed_at,
+      (SELECT GROUP_CONCAT(tag.name, ', ') FROM crm_contact_tags ct JOIN crm_tags tag ON tag.id = ct.tag_id WHERE ct.contact_id = c.id) AS tags
+      FROM crm_threads t JOIN crm_contacts c ON c.id = t.contact_id
+      LEFT JOIN crm_thread_monitor_state m ON m.thread_id = t.id WHERE t.id = ?`).bind(threadId),
+    db.prepare(`SELECT * FROM (SELECT id, direction, message_type, text_content, payload_summary, sent_at
+      FROM crm_messages WHERE thread_id = ? ORDER BY sent_at DESC LIMIT 200) ORDER BY sent_at ASC`).bind(threadId),
+    db.prepare(`SELECT e.event_type, e.source, e.intent, e.product_model, e.occurred_at
+      FROM crm_events e JOIN crm_threads t ON t.contact_id = e.contact_id WHERE t.id = ? ORDER BY e.occurred_at DESC LIMIT 50`).bind(threadId),
+    db.prepare(`SELECT l.* FROM crm_leads l JOIN crm_threads t ON t.contact_id = l.contact_id WHERE t.id = ? ORDER BY l.updated_at DESC`).bind(threadId),
+    db.prepare(`SELECT n.* FROM crm_notes n JOIN crm_threads t ON t.contact_id = n.contact_id WHERE t.id = ? ORDER BY n.created_at DESC LIMIT 50`).bind(threadId),
+  ]);
+  const thread = results[0].results?.[0];
+  if (!thread) return adminJson({ error: "thread_not_found" }, 404);
+  return adminJson({
+    ok: true,
+    thread,
+    messages: results[1].results || [],
+    events: results[2].results || [],
+    leads: results[3].results || [],
+    notes: results[4].results || [],
+    recommendation: monitorRecommendation(thread.last_intent, thread.last_product_model, thread.lifecycle_stage),
+  });
+}
+
+function monitorRecommendation(intent, productModel, stage) {
+  if (intent === "contact_request") return "顧客已要求聯絡，建議優先由專人回覆並建立追蹤時間。";
+  if (intent === "procurement") return "屬於機構採購訊號，建議確認數量、交期、規格與報價窗口。";
+  if (intent === "after_sales") return "屬於售後需求，建議先確認型號、故障情況、購買時間與所在區域。";
+  if (productModel) return `目前規則推薦 ${productModel}，建議確認照護者操作需求與居家空間。`;
+  if (stage === "selecting") return "顧客正在選型，建議補問床面高度、空間、護欄與操作需求。";
+  return "目前為一般互動，可持續觀察下一則訊息或加入人工備註。";
+}
+
+async function markChatThreadRead(db, threadId) {
+  const now = new Date().toISOString();
+  const thread = await db.prepare("SELECT id FROM crm_threads WHERE id = ?").bind(threadId).first();
+  if (!thread) return adminJson({ error: "thread_not_found" }, 404);
+  await db.batch([
+    db.prepare("UPDATE crm_threads SET unread_count = 0, updated_at = ? WHERE id = ?").bind(now, threadId),
+    db.prepare(`INSERT INTO crm_thread_monitor_state (thread_id, priority, analysis_mode, reviewed_at, created_at, updated_at)
+      VALUES (?, 0, 'rule_based', ?, ?, ?)
+      ON CONFLICT(thread_id) DO UPDATE SET reviewed_at = excluded.reviewed_at, updated_at = excluded.updated_at`).bind(threadId, now, now, now),
+    db.prepare(`INSERT INTO admin_audit_logs (id, actor, action, target_type, target_id, detail_json, created_at)
+      VALUES (?, 'admin', 'chat.mark_read', 'thread', ?, '{}', ?)`).bind(crypto.randomUUID(), threadId, now),
+  ]);
+  return adminJson({ ok: true });
+}
+
+async function updateChatThread(request, db, threadId) {
+  const length = Number(request.headers.get("content-length") || 0);
+  if (length > 10000) return adminJson({ error: "payload_too_large" }, 413);
+  const payload = await request.json().catch(() => ({}));
+  const status = String(payload.status || "").trim();
+  const assignedTo = String(payload.assignedTo || "").trim().slice(0, 120);
+  const priority = Number(payload.priority);
+  if (status && !["open", "pending", "closed"].includes(status)) return adminJson({ error: "invalid_status" }, 400);
+  if (!Number.isInteger(priority) || priority < 0 || priority > 3) return adminJson({ error: "invalid_priority" }, 400);
+  const thread = await db.prepare("SELECT id FROM crm_threads WHERE id = ?").bind(threadId).first();
+  if (!thread) return adminJson({ error: "thread_not_found" }, 404);
+  const now = new Date().toISOString();
+  await db.batch([
+    db.prepare("UPDATE crm_threads SET status = CASE WHEN ? = '' THEN status ELSE ? END, updated_at = ? WHERE id = ?").bind(status, status, now, threadId),
+    db.prepare(`INSERT INTO crm_thread_monitor_state (thread_id, priority, assigned_to, analysis_mode, created_at, updated_at)
+      VALUES (?, ?, ?, 'rule_based', ?, ?)
+      ON CONFLICT(thread_id) DO UPDATE SET priority = excluded.priority, assigned_to = excluded.assigned_to, updated_at = excluded.updated_at`)
+      .bind(threadId, priority, assignedTo || null, now, now),
+    db.prepare(`INSERT INTO admin_audit_logs (id, actor, action, target_type, target_id, detail_json, created_at)
+      VALUES (?, 'admin', 'chat.update', 'thread', ?, ?, ?)`)
+      .bind(crypto.randomUUID(), threadId, JSON.stringify({ status: status || null, priority, assignedTo: assignedTo || null }), now),
+  ]);
+  return adminJson({ ok: true });
+}
+
+async function createChatThreadNote(request, db, threadId) {
+  const thread = await db.prepare("SELECT contact_id FROM crm_threads WHERE id = ?").bind(threadId).first();
+  if (!thread) return adminJson({ error: "thread_not_found" }, 404);
+  return createAdminNote(request, db, thread.contact_id);
+}
+
 async function getAdminContacts(db, url) {
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || 50), 1), 100);
   const stage = String(url.searchParams.get("stage") || "").trim();
@@ -655,7 +825,7 @@ function renderSetupRequired() {
 }
 
 function renderAdminPage() {
-  return page("Joson CRM", `<header><div><div class="eyebrow">JOSON CARE OPERATIONS</div><h1>CRM 與智能圖文選單</h1></div><form method="post" action="/admin/logout"><button class="secondary">登出</button></form></header><main><section class="stats" id="stats"><div class="stat">載入中…</div></section><section class="layout"><div class="panel"><div class="section-title"><h2>最近會員</h2><button class="secondary" onclick="loadContacts()">重新整理</button></div><div class="table-wrap"><table><thead><tr><th>會員</th><th>階段</th><th>標籤</th><th>最後訊息</th><th>時間</th></tr></thead><tbody id="contacts"><tr><td colspan="5">載入中…</td></tr></tbody></table></div></div><aside class="panel"><div class="eyebrow">CUSTOM RICH MENU</div><h2>Joson 客製智慧選單</h2><img class="menu-preview" src="${RICH_MENU_IMAGE_PATH}" alt="Joson 客製智能圖文選單預覽"><div id="menu-status" class="menu-status">正在讀取專案狀態…</div><button id="publish-button" onclick="publishMenu()">發布此專案</button><p class="muted">不對稱主視覺：智慧選床為主要入口，搭配四款產品實圖與服務捷徑。發布時會先建立、上傳並驗證新版，再處理舊版。</p></aside></section></main><script>
+  return page("Joson CRM", `<header><div><div class="eyebrow">JOSON CARE OPERATIONS</div><h1>CRM 與智能圖文選單</h1></div><div class="header-actions"><a class="nav-button" href="/admin/chat-monitor">AI 聊天室監控</a><form method="post" action="/admin/logout"><button class="secondary">登出</button></form></div></header><main><section class="stats" id="stats"><div class="stat">載入中…</div></section><section class="layout"><div class="panel"><div class="section-title"><h2>最近會員</h2><button class="secondary" onclick="loadContacts()">重新整理</button></div><div class="table-wrap"><table><thead><tr><th>會員</th><th>階段</th><th>標籤</th><th>最後訊息</th><th>時間</th></tr></thead><tbody id="contacts"><tr><td colspan="5">載入中…</td></tr></tbody></table></div></div><aside class="panel"><div class="eyebrow">CUSTOM RICH MENU</div><h2>Joson 客製智慧選單</h2><img class="menu-preview" src="${RICH_MENU_IMAGE_PATH}" alt="Joson 客製智能圖文選單預覽"><div id="menu-status" class="menu-status">正在讀取專案狀態…</div><button id="publish-button" onclick="publishMenu()">發布此專案</button><p class="muted">不對稱主視覺：智慧選床為主要入口，搭配四款產品實圖與服務捷徑。發布時會先建立、上傳並驗證新版，再處理舊版。</p></aside></section></main><script>
 const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const date=v=>v?new Date(v).toLocaleString('zh-TW'):'—';
 async function loadSummary(){const r=await fetch('/api/admin/summary');if(r.status===401)return location.href='/admin/login';const d=await r.json();document.getElementById('stats').innerHTML=[['會員總數',d.contacts],['7 日活躍',d.active7d],['進行中商機',d.openLeads],['未讀對話',d.unreadThreads]].map(x=>'<div class="stat"><strong>'+e(x[1])+'</strong><span>'+e(x[0])+'</span></div>').join('')}
@@ -666,8 +836,32 @@ loadSummary();loadContacts();loadMenu();
 </script>`);
 }
 
+function renderChatMonitorPage() {
+  return page("AI 聊天室監控｜Joson CRM", `<style>
+.monitor-main{max-width:1440px}.monitor-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}.monitor-grid{display:grid;grid-template-columns:390px minmax(0,1fr);gap:16px;min-height:680px}.monitor-list,.conversation{padding:0;overflow:hidden}.monitor-toolbar{padding:16px;border-bottom:1px solid #e2ebe8}.filters{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.filters input{grid-column:1/-1}.filters select,.thread-controls select,.thread-controls input,textarea{width:100%;padding:10px;border:1px solid #bfd1cc;border-radius:9px;background:#fff;font:inherit}.thread-list{max-height:610px;overflow:auto}.thread-card{display:block;width:100%;padding:14px 16px;border:0;border-bottom:1px solid #e7eeec;border-radius:0;background:#fff;color:#17332e;text-align:left}.thread-card:hover,.thread-card.active{background:#eaf4f1}.thread-top{display:flex;justify-content:space-between;gap:10px;align-items:center}.thread-name{font-weight:850}.thread-meta,.thread-preview{font-size:12px;color:#667d76}.thread-preview{margin:7px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.chips{display:flex;flex-wrap:wrap;gap:5px}.chip{display:inline-block;padding:3px 7px;border-radius:999px;background:#e5efec;color:#175b49;font-size:11px}.chip.p3{background:#fee2e2;color:#9b1c1c}.chip.p2{background:#fff0d5;color:#8a4b08}.unread{min-width:22px;height:22px;padding:2px 6px;border-radius:99px;background:#c53030;color:#fff;text-align:center;font-size:12px}.conversation-empty{display:grid;place-items:center;min-height:680px;color:#657a74;text-align:center;padding:30px}.conversation-head{padding:17px 20px;border-bottom:1px solid #e2ebe8}.conversation-title{display:flex;justify-content:space-between;gap:12px;align-items:start}.analysis{margin-top:12px;padding:12px;border-radius:11px;background:#edf5f2}.analysis strong{display:block;margin-bottom:4px}.thread-controls{display:grid;grid-template-columns:1fr 1fr 1.2fr auto;gap:8px;margin-top:12px}.timeline{height:420px;overflow:auto;padding:18px;background:#f7faf9}.message{display:flex;margin:8px 0}.message.inbound{justify-content:flex-start}.message.outbound{justify-content:flex-end}.bubble{max-width:min(76%,680px);padding:10px 12px;border-radius:14px;background:#fff;border:1px solid #dde8e4;white-space:pre-wrap;overflow-wrap:anywhere}.outbound .bubble{background:#dff1ea;border-color:#c7e4da}.bubble time{display:block;margin-top:5px;color:#71847e;font-size:10px}.conversation-foot{display:grid;grid-template-columns:1fr auto;gap:8px;padding:15px 20px;border-top:1px solid #e2ebe8}.conversation-foot textarea{min-height:70px;resize:vertical}.notes{padding:0 20px 18px}.notes details{padding-top:10px}.note{padding:9px 0;border-bottom:1px solid #e7eeec;font-size:13px}.pulse{display:inline-block;width:8px;height:8px;border-radius:50%;background:#27ae60;margin-right:5px}.mode-note{font-size:12px;color:#657a74}.header-actions{display:flex;align-items:center;gap:10px}.nav-button{display:inline-block;border-radius:10px;background:#fff;color:#174f43;padding:11px 16px;font-weight:800;text-decoration:none}
+@media(max-width:900px){.monitor-grid{grid-template-columns:1fr}.thread-list{max-height:360px}.conversation-empty{min-height:300px}.monitor-stats{grid-template-columns:1fr 1fr}.thread-controls{grid-template-columns:1fr 1fr}.timeline{height:50vh}}
+@media(max-width:520px){.monitor-main{padding:10px}.filters,.thread-controls{grid-template-columns:1fr}.filters input{grid-column:auto}.monitor-stats{grid-template-columns:1fr 1fr}.header-actions{align-items:stretch;flex-direction:column}.conversation-foot{grid-template-columns:1fr}.bubble{max-width:88%}}
+</style><header><div><div class="eyebrow">JOSON CARE CRM</div><h1>AI 聊天室監控</h1><div class="mode-note"><span class="pulse"></span>規則引擎即時判讀，不使用外部 AI 額度</div></div><div class="header-actions"><a class="nav-button" href="/admin">返回總覽</a><form method="post" action="/admin/logout"><button class="secondary">登出</button></form></div></header><main class="monitor-main"><section class="monitor-stats" id="monitor-stats"><div class="stat">載入中…</div></section><section class="monitor-grid"><aside class="panel monitor-list"><div class="monitor-toolbar"><div class="section-title"><h2>LINE 對話</h2><button class="secondary" id="refresh-button">更新</button></div><div class="filters"><input id="search" placeholder="搜尋姓名、訊息或型號"><select id="unread-filter"><option value="">全部訊息</option><option value="1">只看未讀</option></select><select id="priority-filter"><option value="">全部優先級</option><option value="3">緊急</option><option value="2">高</option><option value="1">一般追蹤</option><option value="0">低</option></select><select id="stage-filter"><option value="">全部階段</option><option value="new">新會員</option><option value="selecting">選型中</option><option value="lead">商機</option><option value="customer">客戶</option><option value="after_sales">售後</option><option value="inactive">非活躍</option></select><select id="status-filter"><option value="">全部狀態</option><option value="open">處理中</option><option value="pending">待追蹤</option><option value="closed">已結案</option></select></div></div><div class="thread-list" id="thread-list"><div class="conversation-empty">正在讀取對話…</div></div></aside><section class="panel conversation" id="conversation"><div class="conversation-empty"><div><h2>選擇一則對話</h2><p>查看完整訊息、智能判讀、推薦產品與 CRM 備註。</p></div></div></section></section></main><script>
+const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt=v=>v?new Date(v).toLocaleString('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+const labels={contact_request:'要求聯絡',procurement:'機構採購',after_sales:'售後服務',low_bed:'低床需求',space_saving:'空間收納',four_rail:'四片護欄',professional_controls:'完整操作',start_advisor:'開始選床',compare_products:'床型比較',browse_products:'瀏覽產品',general_message:'一般訊息',line_event:'LINE 事件'};
+const priorities=['低','一般追蹤','高','緊急'];let selectedId='';let searchTimer;
+async function api(url,options){const r=await fetch(url,options);if(r.status===401){location.href='/admin/login';throw new Error('unauthorized')}const d=await r.json();if(!r.ok)throw new Error(d.error||'request_failed');return d}
+async function loadInsights(){const d=await api('/api/admin/chat/insights');document.getElementById('monitor-stats').innerHTML=[['未讀對話',d.unreadThreads],['高優先',d.highPriority],['處理中',d.activeThreads],['7 日訊息',d.inbound7d]].map(x=>'<div class="stat"><strong>'+e(x[1])+'</strong><span>'+e(x[0])+'</span></div>').join('')}
+function query(){const p=new URLSearchParams({limit:'60'});[['q','search'],['unread','unread-filter'],['priority','priority-filter'],['stage','stage-filter'],['status','status-filter']].forEach(([key,id])=>{const v=document.getElementById(id).value.trim();if(v)p.set(key,v)});return p}
+async function loadThreads(){const d=await api('/api/admin/chat/threads?'+query());const box=document.getElementById('thread-list');box.innerHTML=d.threads.length?d.threads.map(t=>'<button class="thread-card '+(t.id===selectedId?'active':'')+'" data-id="'+e(t.id)+'"><div class="thread-top"><span class="thread-name">'+e(t.display_name||'LINE 會員')+'</span>'+(t.unread_count?'<span class="unread">'+e(t.unread_count)+'</span>':'')+'</div><div class="thread-preview">'+e(t.last_message_preview||'尚無文字訊息')+'</div><div class="chips"><span class="chip p'+e(t.priority)+'">'+e(priorities[t.priority]||'低')+'</span><span class="chip">'+e(labels[t.last_intent]||t.last_intent||'未分類')+'</span>'+(t.last_product_model?'<span class="chip">'+e(t.last_product_model)+'</span>':'')+'</div><div class="thread-meta">'+e(fmt(t.last_message_at))+' · '+e(t.lifecycle_stage)+'</div></button>').join(''):'<div class="conversation-empty">沒有符合條件的對話</div>';box.querySelectorAll('[data-id]').forEach(b=>b.addEventListener('click',()=>openThread(b.dataset.id)))}
+async function openThread(id){selectedId=id;await Promise.all([loadThread(),loadThreads()])}
+async function loadThread(){if(!selectedId)return;const d=await api('/api/admin/chat/threads/'+encodeURIComponent(selectedId));const t=d.thread;const messages=d.messages.map(m=>'<div class="message '+e(m.direction)+'"><div class="bubble">'+e(m.text_content||m.payload_summary||m.message_type)+'<time>'+e(m.direction==='inbound'?'會員':'系統回覆')+' · '+e(fmt(m.sent_at))+'</time></div></div>').join('')||'<div class="conversation-empty">尚無訊息</div>';const notes=d.notes.map(n=>'<div class="note">'+e(n.note)+'<div class="thread-meta">'+e(n.author)+' · '+e(fmt(n.created_at))+'</div></div>').join('')||'<div class="note muted">尚無人工備註</div>';document.getElementById('conversation').innerHTML='<div class="conversation-head"><div class="conversation-title"><div><div class="eyebrow">'+e(t.lifecycle_stage)+' · '+e(t.tags||'無標籤')+'</div><h2>'+e(t.display_name||'LINE 會員')+'</h2><div class="thread-meta">LINE ID '+e(t.line_user_id.slice(0,8))+'… · 最後互動 '+e(fmt(t.last_message_at))+'</div></div>'+(t.unread_count?'<button id="read-button">標為已讀 ('+e(t.unread_count)+')</button>':'<span class="chip">已讀</span>')+'</div><div class="analysis"><strong>智能判讀：'+e(labels[t.last_intent]||t.last_intent||'未分類')+(t.last_product_model?' · 推薦 '+e(t.last_product_model):'')+'</strong><span>'+e(d.recommendation)+'</span></div><div class="thread-controls"><select id="edit-status"><option value="open">處理中</option><option value="pending">待追蹤</option><option value="closed">已結案</option></select><select id="edit-priority"><option value="0">低</option><option value="1">一般追蹤</option><option value="2">高</option><option value="3">緊急</option></select><input id="edit-assignee" placeholder="負責人" value="'+e(t.assigned_to||'')+'"><button id="save-button">儲存</button></div></div><div class="timeline" id="timeline">'+messages+'</div><div class="conversation-foot"><textarea id="note-text" placeholder="新增人工備註（不會傳送給 LINE 會員）"></textarea><button id="note-button">加入備註</button></div><div class="notes"><details><summary>CRM 備註 ('+e(d.notes.length)+')</summary>'+notes+'</details></div>';document.getElementById('edit-status').value=t.status;document.getElementById('edit-priority').value=String(t.priority);const timeline=document.getElementById('timeline');timeline.scrollTop=timeline.scrollHeight;document.getElementById('read-button')?.addEventListener('click',markRead);document.getElementById('save-button').addEventListener('click',saveThread);document.getElementById('note-button').addEventListener('click',addNote)}
+async function markRead(){await api('/api/admin/chat/threads/'+encodeURIComponent(selectedId)+'/read',{method:'POST'});await refreshAll()}
+async function saveThread(){await api('/api/admin/chat/threads/'+encodeURIComponent(selectedId),{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({status:document.getElementById('edit-status').value,priority:Number(document.getElementById('edit-priority').value),assignedTo:document.getElementById('edit-assignee').value})});await refreshAll()}
+async function addNote(){const input=document.getElementById('note-text');const note=input.value.trim();if(!note)return;await api('/api/admin/chat/threads/'+encodeURIComponent(selectedId)+'/notes',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({note})});input.value='';await loadThread()}
+async function refreshAll(){await Promise.all([loadInsights(),loadThreads(),selectedId?loadThread():Promise.resolve()])}
+document.getElementById('refresh-button').addEventListener('click',refreshAll);['unread-filter','priority-filter','stage-filter','status-filter'].forEach(id=>document.getElementById(id).addEventListener('change',loadThreads));document.getElementById('search').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(loadThreads,250)});refreshAll();setInterval(()=>{if(!document.hidden)Promise.all([loadInsights(),loadThreads()])},15000);
+</script>`);
+}
+
 function page(title, body) {
-  return `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>*{box-sizing:border-box}body{margin:0;background:#f3f6f5;color:#17332e;font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif}header{display:flex;justify-content:space-between;align-items:center;padding:22px max(20px,calc((100vw - 1180px)/2));background:#153f37;color:#fff}h1,h2{margin:4px 0 12px}.eyebrow{font-size:12px;letter-spacing:.14em;color:#7bbca9;font-weight:800}main{max-width:1180px;margin:auto;padding:24px}.login{max-width:520px;padding-top:10vh}.panel{background:#fff;border:1px solid #dce6e3;border-radius:18px;padding:20px;box-shadow:0 8px 28px rgba(20,63,55,.06)}label{display:grid;gap:8px;font-weight:700}input{width:100%;padding:13px;border:1px solid #bfd1cc;border-radius:10px;font:inherit}button{border:0;border-radius:10px;background:#1b6b55;color:#fff;padding:11px 16px;font-weight:800;cursor:pointer}button:disabled{opacity:.55;cursor:wait}form{display:grid;gap:14px}.secondary{background:#e5efec;color:#174f43}.error{background:#fff1f1;color:#9b2c2c;padding:10px;border-radius:8px;margin:12px 0}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}.stat{background:#fff;border:1px solid #dce6e3;border-radius:15px;padding:18px}.stat strong{display:block;font-size:30px}.stat span,.muted{color:#657a74}.layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(300px,1fr);gap:18px}.section-title{display:flex;justify-content:space-between;align-items:center}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 8px;border-bottom:1px solid #e7eeec;vertical-align:top}th{font-size:12px;color:#657a74}.badge{padding:4px 8px;border-radius:999px;background:#e5f1ed;color:#175b49;font-size:12px}.menu-preview{display:block;width:100%;aspect-ratio:2500/1686;object-fit:contain;border:4px solid #163f37;border-radius:12px;background:#eef4f2;margin:12px 0}.menu-status{display:grid;gap:3px;padding:12px;margin:12px 0;border-radius:10px;background:#edf5f2}.menu-status strong{text-transform:uppercase;color:#175b49}.menu-status span{font-size:12px;color:#657a74;overflow-wrap:anywhere}code{font-size:12px}@media(max-width:800px){.stats{grid-template-columns:1fr 1fr}.layout{grid-template-columns:1fr}header{padding:18px}main{padding:16px}}@media(max-width:480px){.stats{grid-template-columns:1fr 1fr}.stat strong{font-size:24px}}</style></head><body>${body}</body></html>`;
+  return `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>*{box-sizing:border-box}body{margin:0;background:#f3f6f5;color:#17332e;font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif}header{display:flex;justify-content:space-between;align-items:center;padding:22px max(20px,calc((100vw - 1180px)/2));background:#153f37;color:#fff}h1,h2{margin:4px 0 12px}.eyebrow{font-size:12px;letter-spacing:.14em;color:#7bbca9;font-weight:800}main{max-width:1180px;margin:auto;padding:24px}.login{max-width:520px;padding-top:10vh}.panel{background:#fff;border:1px solid #dce6e3;border-radius:18px;padding:20px;box-shadow:0 8px 28px rgba(20,63,55,.06)}label{display:grid;gap:8px;font-weight:700}input{width:100%;padding:13px;border:1px solid #bfd1cc;border-radius:10px;font:inherit}button{border:0;border-radius:10px;background:#1b6b55;color:#fff;padding:11px 16px;font-weight:800;cursor:pointer}button:disabled{opacity:.55;cursor:wait}form{display:grid;gap:14px}.secondary{background:#e5efec;color:#174f43}.error{background:#fff1f1;color:#9b2c2c;padding:10px;border-radius:8px;margin:12px 0}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}.stat{background:#fff;border:1px solid #dce6e3;border-radius:15px;padding:18px}.stat strong{display:block;font-size:30px}.stat span,.muted{color:#657a74}.layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(300px,1fr);gap:18px}.section-title{display:flex;justify-content:space-between;align-items:center}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 8px;border-bottom:1px solid #e7eeec;vertical-align:top}th{font-size:12px;color:#657a74}.badge{padding:4px 8px;border-radius:999px;background:#e5f1ed;color:#175b49;font-size:12px}.menu-preview{display:block;width:100%;aspect-ratio:2500/1686;object-fit:contain;border:4px solid #163f37;border-radius:12px;background:#eef4f2;margin:12px 0}.menu-status{display:grid;gap:3px;padding:12px;margin:12px 0;border-radius:10px;background:#edf5f2}.menu-status strong{text-transform:uppercase;color:#175b49}.menu-status span{font-size:12px;color:#657a74;overflow-wrap:anywhere}code{font-size:12px}.header-actions{display:flex;align-items:center;gap:10px}.nav-button{display:inline-block;border-radius:10px;background:#fff;color:#174f43;padding:11px 16px;font-weight:800;text-decoration:none}@media(max-width:800px){.stats{grid-template-columns:1fr 1fr}.layout{grid-template-columns:1fr}header{padding:18px}main{padding:16px}}@media(max-width:480px){.stats{grid-template-columns:1fr 1fr}.stat strong{font-size:24px}}</style></head><body>${body}</body></html>`;
 }
 
 function escapeHtml(value) {
