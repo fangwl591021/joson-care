@@ -34,6 +34,8 @@ npx wrangler secret put GEMINI_API_KEY
 
 Free-form LINE messages use Gemini `gemini-3.5-flash-lite` with relevant local product and care-knowledge context. Deterministic Rich Menu commands remain on the fast rule path, and Gemini timeout/API failures fall back to the original rule response. `GEMINI_API_KEY` must remain a Worker Secret; never place it in `wrangler.toml`, source code, browser code or chat logs.
 
+AI answers are restricted to Joson-Care official product data, official care articles and the linked government 1966 subsidy guidance. Clearly unrelated general-AI requests and prompt-injection attempts are rejected before calling Gemini, then redirected to product selection, care/subsidy information or human service.
+
 ## First version routes
 
 - `GET /` or `GET /liff` — LIFF smart selection landing page
