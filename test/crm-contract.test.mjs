@@ -6,7 +6,7 @@ import { classifyYoutubeVideo } from "../worker.js";
 
 test("two-page Rich Menu uses top tabs and valid actions", () => {
   assert.deepEqual(DEFAULT_RICH_MENU.size, { width: 2500, height: 1686 });
-  assert.equal(DEFAULT_RICH_MENU.areas.length, 10);
+  assert.equal(DEFAULT_RICH_MENU.areas.length, 11);
   assert.equal(CARE_RICH_MENU.areas.length, 7);
   assert.deepEqual(DEFAULT_RICH_MENU.areas[0].bounds, { x: 1250, y: 0, width: 1250, height: 240 });
   assert.deepEqual(DEFAULT_RICH_MENU.areas[0].action, { type: "richmenuswitch", label: "切換照護知識", richMenuAliasId: "joson-care-knowledge", targetProjectId: "joson-care-knowledge-v3", data: "switch=joson-care-knowledge" });
@@ -31,13 +31,28 @@ test("two-page Rich Menu uses top tabs and valid actions", () => {
 });
 
 test("custom Rich Menu PNG meets LINE dimensions and file-size limit", () => {
-  for (const filename of ["joson-care-main-v4.png", "joson-care-knowledge-v4.png"]) {
+  for (const filename of ["joson-care-main-v5.png", "joson-care-knowledge-v5.png"]) {
     const image = fs.readFileSync(new URL(`../public/assets/rich-menu/${filename}`, import.meta.url));
     assert.equal(image.toString("ascii", 1, 4), "PNG");
     assert.equal(image.readUInt32BE(16), 2500);
     assert.equal(image.readUInt32BE(20), 1686);
     assert.ok(image.byteLength > 0 && image.byteLength <= 1_000_000);
   }
+});
+
+test("main menu exposes five full-width large actions including share", () => {
+  assert.deepEqual(DEFAULT_RICH_MENU.areas.slice(6, 11).map((area) => area.bounds), [
+    { x: 0, y: 1000, width: 500, height: 686 },
+    { x: 500, y: 1000, width: 500, height: 686 },
+    { x: 1000, y: 1000, width: 500, height: 686 },
+    { x: 1500, y: 1000, width: 500, height: 686 },
+    { x: 2000, y: 1000, width: 500, height: 686 },
+  ]);
+  assert.deepEqual(DEFAULT_RICH_MENU.areas[10].action, {
+    type: "uri",
+    label: "分享好友",
+    uri: "https://liff.line.me/2011335134-ccbJ33yx/share",
+  });
 });
 
 test("knowledge menu hotspots follow the visible three-column mobile layout", () => {
@@ -75,6 +90,16 @@ test("YouTube Rich Menu action opens a LIFF video channel with embedded playback
   assert.match(script, /requestedCategory/);
   assert.match(styles, /grid-template-columns:\s*repeat\(2/);
   assert.match(styles, /category-tabs/);
+});
+
+test("share action opens a LIFF friend picker only after user interaction", () => {
+  const worker = fs.readFileSync(new URL("../worker.js", import.meta.url), "utf8");
+  assert.match(worker, /\/liff\/share/);
+  assert.match(worker, /shareLiffUrl/);
+  assert.match(worker, /liff\.isApiAvailable\('shareTargetPicker'\)/);
+  assert.match(worker, /addEventListener\('click',async\(\)=>/);
+  assert.match(worker, /liff\.shareTargetPicker/);
+  assert.match(worker, /分享給需要照護資訊的好友/);
 });
 
 test("YouTube videos are separated into business-ready categories", () => {
@@ -122,7 +147,7 @@ test("Rich Menu Studio validates editable draft definitions", () => {
   const draft = structuredClone(DEFAULT_RICH_MENU);
   draft.name = "Joson Studio draft";
   draft.areas[1].action.displayText = "開始選床";
-  assert.equal(validateRichMenuDefinition(draft).areas.length, 10);
+  assert.equal(validateRichMenuDefinition(draft).areas.length, 11);
 
   const overlap = structuredClone(draft);
   overlap.areas[1].bounds.x = 100;

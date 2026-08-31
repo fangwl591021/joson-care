@@ -6,6 +6,7 @@ const LIFF_ID = "2011335134-ccbJ33yx";
 const LINE_LOGIN_CHANNEL_ID = "2011335134";
 const WORKER_ORIGIN = "https://joson-care.fangwl591021.workers.dev";
 const VIDEO_LIFF_PATH = "/videos";
+const SHARE_LIFF_PATH = "/share";
 const YOUTUBE_CHANNEL_ID = "UClq-e-Ve7LZ0Dx1o5pPruwA";
 const YOUTUBE_CHANNEL_URL = `https://www.youtube.com/channel/${YOUTUBE_CHANNEL_ID}`;
 const FACEBOOK_URL = "https://www.facebook.com/JosonCare";
@@ -60,10 +61,11 @@ export default {
     if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
 
     try {
-      if (path === "/health") return json({ ok: true, service: "joson-care", version: "1.4.0", products: PRODUCTS.length, careArticles: CARE_ARTICLES.length, crm: Boolean(env.CRM_DB), videos: true });
+      if (path === "/health") return json({ ok: true, service: "joson-care", version: "1.5.0", products: PRODUCTS.length, careArticles: CARE_ARTICLES.length, crm: Boolean(env.CRM_DB), videos: true, sharing: true });
       if (path === "/admin" || path.startsWith("/admin/") || path.startsWith("/api/admin/")) return handleAdminRequest(request, env, url);
       if (path === "/line-webhook") return handleLineWebhook(request, env, ctx);
       if (request.method === "GET" && path === "/liff/videos") return serveLiffVideosPage(env, url);
+      if (request.method === "GET" && path === "/liff/share") return html(renderSharePage(env));
       if (request.method === "GET" && path === "/api/videos") return handleYoutubeVideos(request, ctx);
       if (path === "/liff" || path === "/") return html(renderLiffPage(env));
       if (request.method === "GET" && path === "/products") return catalogHtml(renderProductsPage(url));
@@ -81,6 +83,7 @@ export default {
           liffId,
           lineLoginChannelId: env.LINE_LOGIN_CHANNEL_ID || LINE_LOGIN_CHANNEL_ID,
           videoLiffUrl: `https://liff.line.me/${liffId}${VIDEO_LIFF_PATH}`,
+          shareLiffUrl: `https://liff.line.me/${liffId}${SHARE_LIFF_PATH}`,
           social: { facebook: FACEBOOK_URL, youtube: YOUTUBE_CHANNEL_URL, linkedin: LINKEDIN_URL },
         });
       }
@@ -842,6 +845,67 @@ async function serveLiffVideosPage(env, url) {
   headers.set("referrer-policy", "strict-origin-when-cross-origin");
   headers.set("x-content-type-options", "nosniff");
   return cors(new Response(response.body, { status: response.status, headers }));
+}
+
+function renderSharePage(env) {
+  const liffId = env.LIFF_ID || LIFF_ID;
+  const shareText = `Joson-Care 居家照護床與照護知識\n需要選床、產品教學或補助資訊，可以從這裡開始：\n${WORKER_ORIGIN}/liff`;
+  return `<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#17624f">
+  <title>分享 Joson-Care 給好友</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f4f7f5;color:#173e36;font-family:system-ui,-apple-system,"Microsoft JhengHei",sans-serif}.wrap{max-width:680px;margin:auto;padding:28px 20px 48px}.hero{padding:30px 24px;border-radius:24px;background:#17624f;color:#fff}.hero h1{margin:0 0 12px;font-size:34px;line-height:1.25}.hero p{margin:0;font-size:19px;line-height:1.7}.card{margin-top:18px;padding:24px;border:1px solid #d9e5e1;border-radius:22px;background:#fff}.card h2{margin:0 0 10px;font-size:25px}.card p{margin:0 0 20px;color:#506b64;font-size:18px;line-height:1.7}.share{width:100%;min-height:68px;border:0;border-radius:16px;background:#08a653;color:#fff;font-size:24px;font-weight:900}.share:disabled{opacity:.55}.status{margin-top:16px;padding:15px;border-radius:14px;background:#edf4f1;color:#405f57;font-size:17px;line-height:1.6}.links{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}.links a{padding:15px 8px;border-radius:12px;background:#edf4f1;color:#175b4c;text-align:center;text-decoration:none;font-size:17px;font-weight:800}@media(max-width:420px){.hero h1{font-size:30px}.links{grid-template-columns:1fr}}
+  </style>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero"><h1>分享給需要照護資訊的好友</h1><p>把 Joson-Care 的選床、產品教學與照護知識，一次分享給家人或朋友。</p></section>
+    <section class="card">
+      <h2>選擇 LINE 好友</h2>
+      <p>按下按鈕後，LINE 會開啟好友選擇畫面；訊息會以您的名義送出。</p>
+      <button id="share" class="share" disabled>分享好友</button>
+      <div id="status" class="status">正在連接 LINE…</div>
+      <div class="links"><a href="/products">查看產品</a><a href="/care">照護知識</a></div>
+    </section>
+  </main>
+<script>
+(async()=>{
+  const button=document.getElementById('share');
+  const status=document.getElementById('status');
+  try{
+    await liff.init({liffId:${JSON.stringify(liffId)}});
+    if(!liff.isLoggedIn()){
+      status.textContent='請先登入 LINE，再選擇要分享的好友。';
+      button.disabled=false;
+      button.addEventListener('click',()=>liff.login({redirectUri:location.href}));
+      return;
+    }
+    if(!liff.isApiAvailable('shareTargetPicker')){
+      status.textContent='目前環境無法開啟好友選擇器，請從 LINE 內的圖文選單重新開啟。';
+      return;
+    }
+    button.disabled=false;
+    status.textContent='已連接 LINE，請按「分享好友」。';
+    button.addEventListener('click',async()=>{
+      button.disabled=true;
+      status.textContent='正在開啟好友選擇器…';
+      try{
+        await liff.shareTargetPicker([{type:'text',text:${JSON.stringify(shareText)}}]);
+        status.textContent='分享視窗已完成；您也可以再分享給其他好友。';
+      }catch(error){
+        status.textContent='分享未完成：'+(error.message||error);
+      }finally{button.disabled=false;}
+    });
+  }catch(error){status.textContent='LIFF 初始化失敗：'+(error.message||error);}
+})();
+</script>
+</body>
+</html>`;
 }
 
 function renderLiffPage(env) {

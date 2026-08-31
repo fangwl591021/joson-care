@@ -15,26 +15,27 @@ const INTENT_RULES = [
 ];
 
 export const DEFAULT_RICH_MENU = Object.freeze({
-  name: "Joson 智慧服務雙頁選單 v4",
+  name: "Joson 智慧服務雙頁選單 v5",
   chatBarText: "Joson 智慧服務",
   selected: true,
   size: { width: 2500, height: 1686 },
   areas: [
     richMenuSwitchArea(1250, 0, 1250, 240, "切換照護知識", "joson-care-knowledge", "joson-care-knowledge-v3"),
-    richMenuArea(0, 240, 980, 1446, "智慧選床顧問", "ai_select"),
+    richMenuArea(0, 240, 980, 760, "智慧選床顧問", "ai_select"),
     richMenuArea(980, 240, 1520, 530, "全系列產品", "all_products"),
     richMenuUriArea(1015, 780, 460, 165, "Facebook", "https://www.facebook.com/JosonCare"),
     richMenuUriArea(1490, 780, 505, 165, "YouTube 產品使用教學", "https://liff.line.me/2011335134-ccbJ33yx/videos?category=tutorial"),
     richMenuUriArea(2010, 780, 455, 165, "LinkedIn", "https://www.linkedin.com/company/joson-care/"),
-    richMenuArea(995, 975, 365, 711, "床型比較", "compare"),
-    richMenuUriArea(1368, 975, 365, 711, "產品使用教學", "https://liff.line.me/2011335134-ccbJ33yx/videos?category=tutorial"),
-    richMenuArea(1741, 975, 365, 711, "售後服務", "after_sales"),
-    richMenuArea(2114, 975, 365, 711, "專人諮詢", "contact"),
+    richMenuArea(0, 1000, 500, 686, "床型比較", "compare"),
+    richMenuUriArea(500, 1000, 500, 686, "產品使用教學", "https://liff.line.me/2011335134-ccbJ33yx/videos?category=tutorial"),
+    richMenuArea(1000, 1000, 500, 686, "售後服務", "after_sales"),
+    richMenuArea(1500, 1000, 500, 686, "專人諮詢", "contact"),
+    richMenuUriArea(2000, 1000, 500, 686, "分享好友", "https://liff.line.me/2011335134-ccbJ33yx/share"),
   ],
 });
 
 export const CARE_RICH_MENU = Object.freeze({
-  name: "Joson 照護知識雙頁選單 v4",
+  name: "Joson 照護知識雙頁選單 v5",
   chatBarText: "Joson 照護知識",
   selected: false,
   size: { width: 2500, height: 1686 },
@@ -52,7 +53,7 @@ export const CARE_RICH_MENU = Object.freeze({
 const RICH_MENU_PROJECT_ID = "joson-care-main-v3";
 const RICH_MENU_TEMPLATE_ID = "joson-two-page-main-v3";
 const RICH_MENU_ALIAS_ID = "joson-care-main";
-const RICH_MENU_IMAGE_PATH = "/assets/rich-menu/joson-care-main-v4.png";
+const RICH_MENU_IMAGE_PATH = "/assets/rich-menu/joson-care-main-v5.png";
 
 function richMenuArea(x, y, width, height, label, action) {
   return {
