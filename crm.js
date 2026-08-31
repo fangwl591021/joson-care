@@ -858,7 +858,8 @@ async function publishRichMenuPair(env, url) {
   const projectIds = ["joson-care-main-v3", "joson-care-knowledge-v3"];
   const projects = [];
   for (const projectId of projectIds) {
-    const project = await env.CRM_DB.prepare("SELECT * FROM rich_menu_projects WHERE id = ?").bind(projectId).first();
+    const project = await env.CRM_DB.prepare(`SELECT p.*, v.line_rich_menu_id AS previous_line_rich_menu_id
+      FROM rich_menu_projects p LEFT JOIN rich_menu_versions v ON v.id = p.current_version_id WHERE p.id = ?`).bind(projectId).first();
     if (!project || project.status === "archived") return adminJson({ error: "pair_project_not_ready", message: `專案 ${projectId} 不存在或已停用。` }, 409);
     await ensureRichMenuDraft(env.CRM_DB, projectId);
     const draft = await env.CRM_DB.prepare("SELECT definition_json, image_path, revision FROM rich_menu_project_drafts WHERE project_id = ?").bind(projectId).first();
@@ -920,7 +921,10 @@ async function publishRichMenuPair(env, url) {
     }
     statements.push(env.CRM_DB.prepare("UPDATE rich_menu_projects SET is_default = 0 WHERE id NOT IN (?, ?)").bind(main.id, knowledge.id));
     await env.CRM_DB.batch(statements);
-    const cleanup = await cleanupOldRichMenu(token, previousDefault, created[0].richMenuId);
+    const cleanup = [];
+    for (const project of created) {
+      cleanup.push({ projectId: project.id, ...(await cleanupOldRichMenu(token, project.previous_line_rich_menu_id, project.richMenuId)) });
+    }
     return adminJson({ ok: true, verified: true, defaultProjectId: main.id, menus: created.map((project) => ({ projectId: project.id, aliasId: project.aliasId, richMenuId: project.richMenuId })), cleanup });
   } catch (error) {
     if (defaultUpdated && previousDefault) await lineApiRequest(`https://api.line.me/v2/bot/user/all/richmenu/${encodeURIComponent(previousDefault)}`, token, { method: "POST" }).catch(() => undefined);

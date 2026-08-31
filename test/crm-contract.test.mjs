@@ -175,4 +175,6 @@ test("first two-page publish creates both menus before aliases and default verif
   assert.ok(pair.indexOf("verifyDefaultRichMenu") < pair.indexOf("cleanupOldRichMenu"));
   assert.match(pair, /previousAliases/);
   assert.match(pair, /previousDefault/);
+  assert.match(pair, /previous_line_rich_menu_id/);
+  assert.match(pair, /for \(const project of created\) \{\s*cleanup\.push/);
 });
