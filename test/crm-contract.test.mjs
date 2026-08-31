@@ -1,29 +1,80 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
-import { DEFAULT_RICH_MENU, monitorPriorityForIntent, postbackToText, validateRichMenuDefinition } from "../crm.js";
+import { CARE_RICH_MENU, DEFAULT_RICH_MENU, monitorPriorityForIntent, postbackToText, validateRichMenuDefinition } from "../crm.js";
+import { classifyYoutubeVideo } from "../worker.js";
 
-test("custom Rich Menu uses an asymmetric primary area and valid postbacks", () => {
+test("two-page Rich Menu uses top tabs and valid actions", () => {
   assert.deepEqual(DEFAULT_RICH_MENU.size, { width: 2500, height: 1686 });
-  assert.equal(DEFAULT_RICH_MENU.areas.length, 6);
-  assert.deepEqual(DEFAULT_RICH_MENU.areas[0].bounds, { x: 0, y: 0, width: 1030, height: 1686 });
-  assert.deepEqual(DEFAULT_RICH_MENU.areas[1].bounds, { x: 1030, y: 0, width: 1470, height: 970 });
-  assert.ok(DEFAULT_RICH_MENU.areas[0].bounds.width > DEFAULT_RICH_MENU.areas[2].bounds.width * 2);
-  for (const area of DEFAULT_RICH_MENU.areas) {
-    assert.equal(area.action.type, "postback");
-    assert.match(area.action.data, /source=rich_menu_default/);
+  assert.equal(DEFAULT_RICH_MENU.areas.length, 10);
+  assert.equal(CARE_RICH_MENU.areas.length, 7);
+  assert.deepEqual(DEFAULT_RICH_MENU.areas[0].bounds, { x: 1250, y: 0, width: 1250, height: 240 });
+  assert.deepEqual(DEFAULT_RICH_MENU.areas[0].action, { type: "richmenuswitch", label: "切換照護知識", richMenuAliasId: "joson-care-knowledge", targetProjectId: "joson-care-knowledge-v3", data: "switch=joson-care-knowledge" });
+  assert.deepEqual(CARE_RICH_MENU.areas[0].action, { type: "richmenuswitch", label: "切換智慧服務", richMenuAliasId: "joson-care-main", targetProjectId: "joson-care-main-v3", data: "switch=joson-care-main" });
+  assert.deepEqual(DEFAULT_RICH_MENU.areas.slice(3, 6).map((area) => area.action), [
+    { type: "uri", label: "Facebook", uri: "https://www.facebook.com/JosonCare" },
+    { type: "uri", label: "YouTube 產品使用教學", uri: "https://liff.line.me/2011335134-ccbJ33yx/videos?category=tutorial" },
+    { type: "uri", label: "LinkedIn", uri: "https://www.linkedin.com/company/joson-care/" },
+  ]);
+  for (const area of [...DEFAULT_RICH_MENU.areas, ...CARE_RICH_MENU.areas]) {
+    if (area.action.type === "postback") {
+      assert.match(area.action.data, /source=rich_menu_default/);
+    } else if (area.action.type === "richmenuswitch") {
+      assert.match(area.action.richMenuAliasId, /^joson-care-/);
+    } else {
+      assert.equal(area.action.type, "uri");
+    }
     assert.ok(area.bounds.x >= 0 && area.bounds.y >= 0);
-    assert.ok(area.bounds.x + area.bounds.width <= DEFAULT_RICH_MENU.size.width);
-    assert.ok(area.bounds.y + area.bounds.height <= DEFAULT_RICH_MENU.size.height);
+    assert.ok(area.bounds.x + area.bounds.width <= 2500);
+    assert.ok(area.bounds.y + area.bounds.height <= 1686);
   }
 });
 
 test("custom Rich Menu PNG meets LINE dimensions and file-size limit", () => {
-  const image = fs.readFileSync(new URL("../public/assets/rich-menu/joson-care-custom-v1.png", import.meta.url));
-  assert.equal(image.toString("ascii", 1, 4), "PNG");
-  assert.equal(image.readUInt32BE(16), 2500);
-  assert.equal(image.readUInt32BE(20), 1686);
-  assert.ok(image.byteLength > 0 && image.byteLength <= 1_000_000);
+  for (const filename of ["joson-care-main-v3.png", "joson-care-knowledge-v3.png"]) {
+    const image = fs.readFileSync(new URL(`../public/assets/rich-menu/${filename}`, import.meta.url));
+    assert.equal(image.toString("ascii", 1, 4), "PNG");
+    assert.equal(image.readUInt32BE(16), 2500);
+    assert.equal(image.readUInt32BE(20), 1686);
+    assert.ok(image.byteLength > 0 && image.byteLength <= 1_000_000);
+  }
+});
+
+test("YouTube Rich Menu action opens a LIFF video channel with embedded playback", () => {
+  const worker = fs.readFileSync(new URL("../worker.js", import.meta.url), "utf8");
+  const page = fs.readFileSync(new URL("../public/liff-videos.html", import.meta.url), "utf8");
+  const script = fs.readFileSync(new URL("../public/liff-videos.js", import.meta.url), "utf8");
+  const styles = fs.readFileSync(new URL("../public/liff-videos.css", import.meta.url), "utf8");
+  assert.match(worker, /\/liff\/videos/);
+  assert.match(worker, /\/api\/videos/);
+  assert.match(worker, /youtube\.com\/feeds\/videos\.xml/);
+  assert.match(worker, /boundedResponseText/);
+  assert.match(worker, /classifyYoutubeVideo/);
+  assert.match(worker, /企業介紹／品牌形象/);
+  assert.match(worker, /VIDEO_FALLBACK/);
+  assert.match(worker, /caches\.default/);
+  assert.match(worker, /AbortSignal\.timeout\(4000\)/);
+  assert.match(worker, /youtubeVideoPayload\(VIDEO_FALLBACK, "snapshot", true\)/);
+  assert.match(page, /static\.line-scdn\.net\/liff/);
+  assert.match(page, /video-categories/);
+  assert.match(script, /youtube-nocookie\.com\/embed/);
+  assert.match(script, /liff\.init/);
+  assert.match(script, /viewType === "tall"/);
+  assert.match(script, /renderCategoryTabs/);
+  assert.match(script, /renderVideos/);
+  assert.match(script, /requestedCategory/);
+  assert.match(styles, /grid-template-columns:\s*repeat\(2/);
+  assert.match(styles, /category-tabs/);
+});
+
+test("YouTube videos are separated into business-ready categories", () => {
+  assert.equal(classifyYoutubeVideo("2026 台灣國際醫療暨健康照護展 Day 1"), "visit");
+  assert.equal(classifyYoutubeVideo("Joson-Care 企業品牌形象影片"), "brand");
+  assert.equal(classifyYoutubeVideo("ES-18UDS Ultra Low Bed 使用教學"), "tutorial");
+  assert.equal(classifyYoutubeVideo("溫馨照護紀錄"), "other");
+  const worker = fs.readFileSync(new URL("../worker.js", import.meta.url), "utf8");
+  assert.ok(worker.indexOf('{ id: "tutorial"') < worker.indexOf('{ id: "visit"'));
+  assert.match(worker, /api\/videos-order-v2/);
 });
 
 test("Rich Menu actions route into existing conversation commands", () => {
@@ -60,12 +111,20 @@ test("admin includes protected AI chat monitoring routes", () => {
 test("Rich Menu Studio validates editable draft definitions", () => {
   const draft = structuredClone(DEFAULT_RICH_MENU);
   draft.name = "Joson Studio draft";
-  draft.areas[0].action.displayText = "開始選床";
-  assert.equal(validateRichMenuDefinition(draft).areas.length, 6);
+  draft.areas[1].action.displayText = "開始選床";
+  assert.equal(validateRichMenuDefinition(draft).areas.length, 10);
 
   const overlap = structuredClone(draft);
   overlap.areas[1].bounds.x = 100;
   assert.throws(() => validateRichMenuDefinition(overlap), /互相重疊/);
+});
+
+test("care knowledge routes expose local guides, subsidy and API", () => {
+  const worker = fs.readFileSync(new URL("../worker.js", import.meta.url), "utf8");
+  const data = fs.readFileSync(new URL("../data/care.js", import.meta.url), "utf8");
+  for (const route of ["/care", "/subsidy", "/api/care"]) assert.match(worker, new RegExp(route.replaceAll("/", "\\/")));
+  for (const topic of ["防跌與居家安全", "中風／長期臥床照護", "失智症居家照護", "照護床操作與保養", "長照輔具與醫療床補助"]) assert.match(data, new RegExp(topic));
+  assert.match(data, /1966\.gov\.tw/);
 });
 
 test("Rich Menu Studio exposes template, project, draft and version modules", () => {
@@ -91,4 +150,19 @@ test("full Studio stores uploaded images in R2 and preserves a safe publish work
   assert.match(source, /verifyDefaultRichMenu/);
   assert.match(source, /cleanupOldRichMenu/);
   assert.ok(source.indexOf("verifyDefaultRichMenu") < source.indexOf("cleanupOldRichMenu"));
+});
+
+test("first two-page publish creates both menus before aliases and default verification", () => {
+  const source = fs.readFileSync(new URL("../crm.js", import.meta.url), "utf8");
+  const start = source.indexOf("async function publishRichMenuPair");
+  const end = source.indexOf("async function publishRichMenuProject", start);
+  const pair = source.slice(start, end);
+  assert.match(source, /\/api\/admin\/rich-menu\/publish-pair/);
+  assert.match(pair, /for \(const project of projects\)/);
+  assert.match(pair, /for \(const project of created\) await upsertRichMenuAlias/);
+  assert.ok(pair.indexOf("readRichMenuImage") < pair.indexOf("upsertRichMenuAlias"));
+  assert.ok(pair.indexOf("upsertRichMenuAlias") < pair.indexOf("verifyDefaultRichMenu"));
+  assert.ok(pair.indexOf("verifyDefaultRichMenu") < pair.indexOf("cleanupOldRichMenu"));
+  assert.match(pair, /previousAliases/);
+  assert.match(pair, /previousDefault/);
 });

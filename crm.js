@@ -15,24 +15,44 @@ const INTENT_RULES = [
 ];
 
 export const DEFAULT_RICH_MENU = Object.freeze({
-  name: "Joson 客製智慧照護選單 v1",
+  name: "Joson 智慧服務雙頁選單 v3",
   chatBarText: "Joson 智慧服務",
   selected: true,
   size: { width: 2500, height: 1686 },
   areas: [
-    richMenuArea(0, 0, 1030, 1686, "智慧選床顧問", "ai_select"),
-    richMenuArea(1030, 0, 1470, 970, "四款居家精選", "featured_products"),
-    richMenuArea(1030, 970, 383, 716, "全系列產品", "all_products"),
-    richMenuArea(1413, 970, 362, 716, "床型比較", "compare"),
-    richMenuArea(1775, 970, 363, 716, "售後服務", "after_sales"),
-    richMenuArea(2138, 970, 362, 716, "專人諮詢", "contact"),
+    richMenuSwitchArea(1250, 0, 1250, 240, "切換照護知識", "joson-care-knowledge", "joson-care-knowledge-v3"),
+    richMenuArea(0, 240, 980, 1446, "智慧選床顧問", "ai_select"),
+    richMenuArea(980, 240, 1520, 530, "全系列產品", "all_products"),
+    richMenuUriArea(1015, 780, 460, 165, "Facebook", "https://www.facebook.com/JosonCare"),
+    richMenuUriArea(1490, 780, 505, 165, "YouTube 產品使用教學", "https://liff.line.me/2011335134-ccbJ33yx/videos?category=tutorial"),
+    richMenuUriArea(2010, 780, 455, 165, "LinkedIn", "https://www.linkedin.com/company/joson-care/"),
+    richMenuArea(995, 975, 365, 711, "床型比較", "compare"),
+    richMenuUriArea(1368, 975, 365, 711, "產品使用教學", "https://liff.line.me/2011335134-ccbJ33yx/videos?category=tutorial"),
+    richMenuArea(1741, 975, 365, 711, "售後服務", "after_sales"),
+    richMenuArea(2114, 975, 365, 711, "專人諮詢", "contact"),
   ],
 });
 
-const RICH_MENU_PROJECT_ID = "joson-care-default";
-const RICH_MENU_TEMPLATE_ID = "joson-custom-asymmetric-v1";
-const RICH_MENU_ALIAS_ID = "joson-care-default";
-const RICH_MENU_IMAGE_PATH = "/assets/rich-menu/joson-care-custom-v1.png";
+export const CARE_RICH_MENU = Object.freeze({
+  name: "Joson 照護知識雙頁選單 v3",
+  chatBarText: "Joson 照護知識",
+  selected: false,
+  size: { width: 2500, height: 1686 },
+  areas: [
+    richMenuSwitchArea(0, 0, 1250, 240, "切換智慧服務", "joson-care-main", "joson-care-main-v3"),
+    richMenuUriArea(0, 240, 960, 1446, "照護知識專區", "https://joson-care.fangwl591021.workers.dev/care"),
+    richMenuUriArea(965, 270, 740, 395, "防跌與居家安全", "https://joson-care.fangwl591021.workers.dev/care/fall-prevention"),
+    richMenuUriArea(1725, 270, 740, 395, "中風與長期臥床", "https://joson-care.fangwl591021.workers.dev/care/bedridden-stroke"),
+    richMenuUriArea(965, 685, 740, 395, "失智症居家照護", "https://joson-care.fangwl591021.workers.dev/care/dementia-care"),
+    richMenuUriArea(1725, 685, 740, 395, "照護床操作與保養", "https://joson-care.fangwl591021.workers.dev/care/bed-operation-maintenance"),
+    richMenuUriArea(965, 1100, 1500, 542, "長照輔具與醫療床補助", "https://joson-care.fangwl591021.workers.dev/subsidy"),
+  ],
+});
+
+const RICH_MENU_PROJECT_ID = "joson-care-main-v3";
+const RICH_MENU_TEMPLATE_ID = "joson-two-page-main-v3";
+const RICH_MENU_ALIAS_ID = "joson-care-main";
+const RICH_MENU_IMAGE_PATH = "/assets/rich-menu/joson-care-main-v3.png";
 
 function richMenuArea(x, y, width, height, label, action) {
   return {
@@ -43,6 +63,20 @@ function richMenuArea(x, y, width, height, label, action) {
       data: `action=${action}&source=rich_menu_default`,
       displayText: label,
     },
+  };
+}
+
+function richMenuUriArea(x, y, width, height, label, uri) {
+  return {
+    bounds: { x, y, width, height },
+    action: { type: "uri", label, uri },
+  };
+}
+
+function richMenuSwitchArea(x, y, width, height, label, richMenuAliasId, targetProjectId) {
+  return {
+    bounds: { x, y, width, height },
+    action: { type: "richmenuswitch", label, richMenuAliasId, targetProjectId, data: `switch=${richMenuAliasId}` },
   };
 }
 
@@ -224,6 +258,7 @@ function summarizeMessages(messages) {
 export async function handleAdminRequest(request, env, url) {
   const path = url.pathname;
   const publishMatch = path.match(/^\/api\/admin\/rich-menu\/projects\/([^/]+)\/publish$/);
+  const publishPairRoute = path === "/api/admin/rich-menu/publish-pair" && request.method === "POST";
   const richMenuDraftMatch = path.match(/^\/api\/admin\/rich-menu\/projects\/([^/]+)\/draft$/);
   const richMenuProjectMatch = path.match(/^\/api\/admin\/rich-menu\/projects\/([^/]+)$/);
   const richMenuProjectImageMatch = path.match(/^\/api\/admin\/rich-menu\/projects\/([^/]+)\/upload-image$/);
@@ -234,7 +269,7 @@ export async function handleAdminRequest(request, env, url) {
   const chatThreadMatch = path.match(/^\/api\/admin\/chat\/threads\/([^/]+)$/);
   const chatReadMatch = path.match(/^\/api\/admin\/chat\/threads\/([^/]+)\/read$/);
   const chatNoteMatch = path.match(/^\/api\/admin\/chat\/threads\/([^/]+)\/notes$/);
-  const maintenanceRoute = (publishMatch && request.method === "POST") || (path === "/api/admin/rich-menu/verify" && request.method === "GET");
+  const maintenanceRoute = (publishMatch && request.method === "POST") || publishPairRoute || (path === "/api/admin/rich-menu/verify" && request.method === "GET");
   const maintenanceTokenAuthorized = Boolean(
     maintenanceRoute && env.RICH_MENU_PUBLISH_TOKEN && isBearerAuthorized(request, env.RICH_MENU_PUBLISH_TOKEN)
   );
@@ -281,6 +316,7 @@ export async function handleAdminRequest(request, env, url) {
   if (chatThreadMatch && request.method === "GET") return getChatThread(env.CRM_DB, decodeURIComponent(chatThreadMatch[1]));
   if (chatThreadMatch && request.method === "PATCH") return updateChatThread(request, env.CRM_DB, decodeURIComponent(chatThreadMatch[1]));
   if (path === "/api/admin/rich-menu/definition" && request.method === "GET") return adminJson({ ok: true, imagePath: RICH_MENU_IMAGE_PATH, definition: DEFAULT_RICH_MENU });
+  if (publishPairRoute) return publishRichMenuPair(env, url);
   if (richMenuAssetMatch && request.method === "GET") return serveRichMenuAsset(env, decodeURIComponent(richMenuAssetMatch[1]));
   if (path === "/api/admin/rich-menu/studio" && request.method === "GET") return getRichMenuStudio(env.CRM_DB, url);
   if (path === "/api/admin/rich-menu/templates" && request.method === "GET") return getRichMenuTemplates(env.CRM_DB);
@@ -817,6 +853,89 @@ async function sha256ArrayBuffer(value) {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+async function publishRichMenuPair(env, url) {
+  if (!env.LINE_CHANNEL_ACCESS_TOKEN) return adminJson({ error: "line_access_token_not_configured" }, 503);
+  const projectIds = ["joson-care-main-v3", "joson-care-knowledge-v3"];
+  const projects = [];
+  for (const projectId of projectIds) {
+    const project = await env.CRM_DB.prepare("SELECT * FROM rich_menu_projects WHERE id = ?").bind(projectId).first();
+    if (!project || project.status === "archived") return adminJson({ error: "pair_project_not_ready", message: `專案 ${projectId} 不存在或已停用。` }, 409);
+    await ensureRichMenuDraft(env.CRM_DB, projectId);
+    const draft = await env.CRM_DB.prepare("SELECT definition_json, image_path, revision FROM rich_menu_project_drafts WHERE project_id = ?").bind(projectId).first();
+    let definition;
+    try { definition = validateRichMenuDefinition(JSON.parse(draft?.definition_json || "null")); }
+    catch (error) { return adminJson({ error: "invalid_rich_menu_draft", message: `${projectId}: ${String(error?.message || error)}` }, 400); }
+    projects.push({ ...project, draft, definition, aliasId: String(project.alias_id || "") });
+  }
+  const [main, knowledge] = projects;
+  const expected = new Map([[main.id, knowledge], [knowledge.id, main]]);
+  for (const project of projects) {
+    const target = expected.get(project.id);
+    const switches = project.definition.areas.filter((area) => area.action.type === "richmenuswitch");
+    if (switches.length !== 1 || switches[0].action.targetProjectId !== target.id || switches[0].action.richMenuAliasId !== target.aliasId) {
+      return adminJson({ error: "invalid_pair_switch", message: `${project.id} 的切換目標與雙頁專案不一致。` }, 409);
+    }
+  }
+
+  const token = env.LINE_CHANNEL_ACCESS_TOKEN;
+  const previousDefault = (await getDefaultRichMenu(token)).richMenuId || null;
+  const previousAliases = new Map();
+  for (const project of projects) previousAliases.set(project.aliasId, await getRichMenuAliasTarget(token, project.aliasId));
+  const now = new Date().toISOString();
+  const created = [];
+  let defaultUpdated = false;
+  await env.CRM_DB.batch(projects.map((project) => env.CRM_DB.prepare("UPDATE rich_menu_projects SET status = 'publishing', updated_at = ? WHERE id = ?").bind(now, project.id)));
+
+  try {
+    for (const project of projects) {
+      const lineDefinition = toLineRichMenuDefinition(project.definition);
+      await lineApiRequest("https://api.line.me/v2/bot/richmenu/validate", token, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(lineDefinition) });
+      const result = await lineApiRequest("https://api.line.me/v2/bot/richmenu", token, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(lineDefinition) }, true);
+      const richMenuId = String(result.richMenuId || "");
+      if (!richMenuId) throw new Error(`LINE did not return a Rich Menu ID for ${project.id}`);
+      const image = await readRichMenuImage(env, url, String(project.draft.image_path));
+      if (!image.bytes.byteLength || image.bytes.byteLength > 1_000_000) throw new Error(`Rich Menu image size invalid: ${project.id} ${image.bytes.byteLength}`);
+      await lineApiRequest(`https://api-data.line.me/v2/bot/richmenu/${encodeURIComponent(richMenuId)}/content`, token, { method: "POST", headers: { "content-type": image.contentType }, body: image.bytes });
+      created.push({ ...project, richMenuId, versionId: crypto.randomUUID() });
+    }
+
+    for (const project of created) await upsertRichMenuAlias(token, project.aliasId, project.richMenuId);
+    await lineApiRequest(`https://api.line.me/v2/bot/user/all/richmenu/${encodeURIComponent(created[0].richMenuId)}`, token, { method: "POST" });
+    defaultUpdated = true;
+    await verifyDefaultRichMenu(token, created[0].richMenuId);
+
+    const finishedAt = new Date().toISOString();
+    const statements = [];
+    for (const project of created) {
+      statements.push(
+        env.CRM_DB.prepare("UPDATE rich_menu_versions SET status = 'retired', updated_at = ? WHERE project_id = ? AND status = 'active'").bind(finishedAt, project.id),
+        env.CRM_DB.prepare(`INSERT INTO rich_menu_versions
+          (id, name, audience_stage, line_rich_menu_id, alias_id, definition_json, image_path, status, published_at, created_at, updated_at, project_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`)
+          .bind(project.versionId, project.definition.name, project.audience_stage || "default", project.richMenuId, project.aliasId, JSON.stringify(project.definition), project.draft.image_path, finishedAt, finishedAt, finishedAt, project.id),
+        env.CRM_DB.prepare("UPDATE rich_menu_projects SET status = 'published', current_version_id = ?, is_default = ?, updated_at = ? WHERE id = ?").bind(project.versionId, project.id === main.id ? 1 : 0, finishedAt, project.id),
+        env.CRM_DB.prepare("INSERT INTO admin_audit_logs (id, actor, action, target_type, target_id, detail_json, created_at) VALUES (?, 'maintenance', 'rich_menu.publish_pair', 'rich_menu_project', ?, ?, ?)")
+          .bind(crypto.randomUUID(), project.id, JSON.stringify({ richMenuId: project.richMenuId, aliasId: project.aliasId, draftRevision: project.draft.revision }), finishedAt)
+      );
+    }
+    statements.push(env.CRM_DB.prepare("UPDATE rich_menu_projects SET is_default = 0 WHERE id NOT IN (?, ?)").bind(main.id, knowledge.id));
+    await env.CRM_DB.batch(statements);
+    const cleanup = await cleanupOldRichMenu(token, previousDefault, created[0].richMenuId);
+    return adminJson({ ok: true, verified: true, defaultProjectId: main.id, menus: created.map((project) => ({ projectId: project.id, aliasId: project.aliasId, richMenuId: project.richMenuId })), cleanup });
+  } catch (error) {
+    if (defaultUpdated && previousDefault) await lineApiRequest(`https://api.line.me/v2/bot/user/all/richmenu/${encodeURIComponent(previousDefault)}`, token, { method: "POST" }).catch(() => undefined);
+    for (const project of projects) {
+      const previous = previousAliases.get(project.aliasId);
+      if (previous) await upsertRichMenuAlias(token, project.aliasId, previous).catch(() => undefined);
+      else await deleteRichMenuAlias(token, project.aliasId).catch(() => undefined);
+    }
+    for (const project of created) await lineApiRequest(`https://api.line.me/v2/bot/richmenu/${encodeURIComponent(project.richMenuId)}`, token, { method: "DELETE" }).catch(() => undefined);
+    const failedAt = new Date().toISOString();
+    await env.CRM_DB.batch(projects.map((project) => env.CRM_DB.prepare("UPDATE rich_menu_projects SET status = 'failed', updated_at = ? WHERE id = ?").bind(failedAt, project.id))).catch(() => undefined);
+    return adminJson({ error: "rich_menu_pair_publish_failed", message: String(error?.message || error).slice(0, 500) }, 502);
+  }
+}
+
 async function publishRichMenuProject(env, url, projectId) {
   if (!env.LINE_CHANNEL_ACCESS_TOKEN) return adminJson({ error: "line_access_token_not_configured" }, 503);
 
@@ -1004,6 +1123,20 @@ async function upsertRichMenuAlias(accessToken, aliasId, richMenuId) {
   });
 }
 
+async function getRichMenuAliasTarget(accessToken, aliasId) {
+  const response = await fetch(`https://api.line.me/v2/bot/richmenu/alias/${encodeURIComponent(aliasId)}`, { headers: { authorization: `Bearer ${accessToken}` } });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`LINE alias lookup failed: HTTP ${response.status} ${await readTextLimited(response)}`);
+  const data = await response.json();
+  return String(data.richMenuId || "") || null;
+}
+
+async function deleteRichMenuAlias(accessToken, aliasId) {
+  const response = await fetch(`https://api.line.me/v2/bot/richmenu/alias/${encodeURIComponent(aliasId)}`, { method: "DELETE", headers: { authorization: `Bearer ${accessToken}` } });
+  if (response.status === 404) return;
+  if (!response.ok) throw new Error(`LINE alias delete failed: HTTP ${response.status} ${await readTextLimited(response)}`);
+}
+
 async function verifyDefaultRichMenu(accessToken, expectedId) {
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const current = await getDefaultRichMenu(accessToken);
@@ -1094,6 +1227,7 @@ async function getAdminSystemStatus(env, url) {
       webhook: `${url.origin}/line-webhook`,
       callback: `${url.origin}/callback`,
       liff: `${url.origin}/liff`,
+      videos: `${url.origin}/liff/videos`,
       health: `${url.origin}/health`,
     },
   });

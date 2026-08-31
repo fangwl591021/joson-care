@@ -1,9 +1,42 @@
 import { CATALOG_GENERATED_AT, PRODUCTS } from "./data/products.js";
+import { CARE_ARTICLES, CARE_VERIFIED_AT } from "./data/care.js";
 import { handleAdminRequest, postbackToText, recordLineInteraction } from "./crm.js";
 
 const LIFF_ID = "2011335134-ccbJ33yx";
 const LINE_LOGIN_CHANNEL_ID = "2011335134";
 const WORKER_ORIGIN = "https://joson-care.fangwl591021.workers.dev";
+const VIDEO_LIFF_PATH = "/videos";
+const YOUTUBE_CHANNEL_ID = "UClq-e-Ve7LZ0Dx1o5pPruwA";
+const YOUTUBE_CHANNEL_URL = `https://www.youtube.com/channel/${YOUTUBE_CHANNEL_ID}`;
+const FACEBOOK_URL = "https://www.facebook.com/JosonCare";
+const LINKEDIN_URL = "https://www.linkedin.com/company/joson-care/";
+const VIDEO_CATEGORIES = Object.freeze([
+  { id: "tutorial", label: "產品使用／教學" },
+  { id: "visit", label: "參訪交流" },
+  { id: "brand", label: "企業介紹／品牌形象" },
+  { id: "other", label: "其他影音" },
+]);
+const VIDEO_FALLBACK = Object.freeze([
+  ["7NpYrzB3nqA", "2026 台灣國際醫療暨健康照護展 第二天 2026 Medical Taiwan Day 2", "2026-07-09T16:24:01+08:00", "visit"],
+  ["rI0Wgs6E_t4", "2026 台灣國際醫療暨健康照護展 第三天 2026 Medical Taiwan Day 3", "2026-07-09T16:23:33+08:00", "visit"],
+  ["HTcTbNBIVzQ", "2026 台灣國際醫療暨健康照護展 第一天 2026 Medical Taiwan Day 1", "2026-07-09T16:22:53+08:00", "visit"],
+  ["X8OTZmVR_tM", "2025 台灣國際醫療暨健康照護展 第二天 2025 Medical Taiwan Day 2", "2025-07-18T10:08:50+08:00", "visit"],
+  ["FKzOCuHyfEA", "2025 台灣國際醫療暨健康照護展 第三天 2025 Medical Taiwan Day 3", "2025-07-18T10:08:13+08:00", "visit"],
+  ["uRNt9B2Uvbk", "2025 台灣國際醫療暨健康照護展 第一天 2025 Medical Taiwan Day 1", "2025-07-18T10:07:23+08:00", "visit"],
+  ["F02aCQ-lRPI", "ES-18UDS Ultra Low Bed", "2024-09-11T11:39:36+08:00", "tutorial"],
+  ["Wyuh72RXYA4", "ES-19HD Hospital ICU Bed", "2024-08-05T15:52:27+08:00", "tutorial"],
+  ["nI17_Kpc_U0", "Emergency Stretcher JE 200", "2024-08-05T15:52:19+08:00", "tutorial"],
+  ["GGIXiuFsJuc", "Emergency Stretcher ABS Plastic JE 300", "2024-08-05T15:52:15+08:00", "tutorial"],
+  ["D2gMYu_KxJ8", "ICU Electric Hospital Bed With Weighing Scale ES-12DW", "2024-08-05T15:51:49+08:00", "tutorial"],
+  ["i1uWJ-F-AOM", "ES-12DW ICU電動加護磅秤床", "2024-08-05T15:51:23+08:00", "tutorial"],
+].map(([videoId, title, publishedAt, category]) => Object.freeze({
+  videoId,
+  title,
+  category,
+  publishedAt,
+  url: `https://www.youtube.com/watch?v=${videoId}`,
+  thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+})));
 const FEATURED_PRODUCT_COPY = Object.freeze({
   "ES-18UDS": {
     reasons: ["適合一般居家使用", "最低床面約 23.5cm", "適合重視低床設計的家庭", "木質外觀較符合居家環境"],
@@ -27,16 +60,30 @@ export default {
     if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
 
     try {
-      if (path === "/health") return json({ ok: true, service: "joson-care", version: "1.2.0", products: PRODUCTS.length, crm: Boolean(env.CRM_DB) });
+      if (path === "/health") return json({ ok: true, service: "joson-care", version: "1.4.0", products: PRODUCTS.length, careArticles: CARE_ARTICLES.length, crm: Boolean(env.CRM_DB), videos: true });
       if (path === "/admin" || path.startsWith("/admin/") || path.startsWith("/api/admin/")) return handleAdminRequest(request, env, url);
       if (path === "/line-webhook") return handleLineWebhook(request, env, ctx);
+      if (request.method === "GET" && path === "/liff/videos") return serveLiffVideosPage(env, url);
+      if (request.method === "GET" && path === "/api/videos") return handleYoutubeVideos(request, ctx);
       if (path === "/liff" || path === "/") return html(renderLiffPage(env));
       if (request.method === "GET" && path === "/products") return catalogHtml(renderProductsPage(url));
       if (request.method === "GET" && path.startsWith("/products/")) return handleProductPage(path);
       if (request.method === "GET" && path === "/api/products") return handleProductsApi(url);
+      if (request.method === "GET" && path === "/care") return catalogHtml(renderCareIndex());
+      if (request.method === "GET" && path.startsWith("/care/")) return handleCarePage(path);
+      if (request.method === "GET" && path === "/subsidy") return catalogHtml(renderSubsidyPage());
+      if (request.method === "GET" && path === "/api/care") return json({ ok: true, verifiedAt: CARE_VERIFIED_AT, count: CARE_ARTICLES.length, articles: CARE_ARTICLES });
       if (path === "/login") return startLineLogin(request, env);
       if (path === "/callback") return handleLineLoginCallback(request, env);
-      if (path === "/api/config") return json({ liffId: env.LIFF_ID || LIFF_ID, lineLoginChannelId: env.LINE_LOGIN_CHANNEL_ID || LINE_LOGIN_CHANNEL_ID });
+      if (path === "/api/config") {
+        const liffId = env.LIFF_ID || LIFF_ID;
+        return json({
+          liffId,
+          lineLoginChannelId: env.LINE_LOGIN_CHANNEL_ID || LINE_LOGIN_CHANNEL_ID,
+          videoLiffUrl: `https://liff.line.me/${liffId}${VIDEO_LIFF_PATH}`,
+          social: { facebook: FACEBOOK_URL, youtube: YOUTUBE_CHANNEL_URL, linkedin: LINKEDIN_URL },
+        });
+      }
       return json({ error: "not_found" }, 404);
     } catch (error) {
       console.error(error);
@@ -369,6 +416,109 @@ function handleProductsApi(url) {
   }, 200, { "cache-control": "public, max-age=300" });
 }
 
+async function boundedResponseText(response, maxBytes = 524288) {
+  if (!response.body) return "";
+  const declaredSize = Number(response.headers.get("content-length") || 0);
+  if (declaredSize > maxBytes) throw new Error("YouTube feed is too large");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytesRead = 0;
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytesRead += value.byteLength;
+      if (bytesRead > maxBytes) {
+        await reader.cancel();
+        throw new Error("YouTube feed is too large");
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    return text;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function decodeYoutubeXml(value = "") {
+  return String(value)
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+export function classifyYoutubeVideo(title = "") {
+  const normalized = String(title).normalize("NFKC").toLocaleLowerCase("zh-Hant");
+  if (/(參訪|展覽|展會|博覽會|醫療展|照護展|交流|medical taiwan|\bexpo\b|exhibition)/i.test(normalized)) return "visit";
+  if (/(企業|公司|品牌|形象|工廠|製造|關於我們|corporate|company|factory|about us)/i.test(normalized)) return "brand";
+  if (/(教學|操作|使用|安裝|保養|清潔|維修|故障|功能|電動床|照護床|病床|推床|\bbed\b|stretcher|\bes[- ]?\d|\bje[- ]?\d)/i.test(normalized)) return "tutorial";
+  return "other";
+}
+
+function youtubeVideoPayload(videos, source, stale = false) {
+  return {
+    ok: true,
+    source,
+    stale,
+    channel: { id: YOUTUBE_CHANNEL_ID, title: "Joson-Care", url: YOUTUBE_CHANNEL_URL },
+    categories: VIDEO_CATEGORIES.map((category) => ({
+      ...category,
+      count: videos.filter((video) => video.category === category.id).length,
+    })),
+    videos,
+  };
+}
+
+async function handleYoutubeVideos(request, ctx) {
+  const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${YOUTUBE_CHANNEL_ID}`;
+  const cache = typeof caches === "undefined" ? null : caches.default;
+  const cacheKey = new Request(new URL("/api/videos-order-v2", request.url), { method: "GET" });
+  if (cache) {
+    const cached = await cache.match(cacheKey);
+    if (cached) return cached;
+  }
+  try {
+    const upstream = await fetch(feedUrl, {
+      headers: { accept: "application/atom+xml,application/xml;q=0.9" },
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!upstream.ok) throw new Error(`YouTube feed returned ${upstream.status}`);
+    const xml = await boundedResponseText(upstream);
+    const videos = [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)].slice(0, 12).map((match) => {
+      const entry = match[1];
+      const videoId = entry.match(/<yt:videoId>([^<]+)<\/yt:videoId>/)?.[1] || "";
+      const title = decodeYoutubeXml(entry.match(/<title>([\s\S]*?)<\/title>/)?.[1] || "");
+      const publishedAt = entry.match(/<published>([^<]+)<\/published>/)?.[1] || "";
+      if (!/^[A-Za-z0-9_-]{6,20}$/.test(videoId)) return null;
+      return {
+        videoId,
+        title,
+        category: classifyYoutubeVideo(title),
+        publishedAt,
+        url: `https://www.youtube.com/watch?v=${videoId}`,
+        thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      };
+    }).filter(Boolean);
+    const response = json(youtubeVideoPayload(videos, "youtube"), 200, {
+      "cache-control": "public, max-age=300, stale-if-error=86400",
+    });
+    if (cache) ctx.waitUntil(cache.put(cacheKey, response.clone()).catch(() => undefined));
+    return response;
+  } catch (error) {
+    console.error(JSON.stringify({ level: "error", message: "YouTube feed failed", error: error?.message || String(error) }));
+    const response = json(youtubeVideoPayload(VIDEO_FALLBACK, "snapshot", true), 200, {
+      "cache-control": "public, max-age=60, stale-if-error=86400",
+      "x-video-source": "snapshot",
+    });
+    if (cache) ctx.waitUntil(cache.put(cacheKey, response.clone()).catch(() => undefined));
+    return response;
+  }
+}
+
 function handleProductPage(path) {
   let slug;
   try {
@@ -476,6 +626,71 @@ function renderProductPage(product) {
       <section class="notice"><h2>使用提醒</h2><p>本頁提供產品資訊與選型比較，不進行疾病診斷、不宣稱治療效果，也不取代醫師、護理師或其他醫療專業人員的判斷。</p></section>
       <p class="source"><a href="${escapeHtml(product.sourceUrl)}" rel="noopener noreferrer">查看原始官網資料</a></p>
     </main>`);
+}
+
+function handleCarePage(path) {
+  const slug = decodeURIComponent(path.slice("/care/".length)).replace(/\/$/, "");
+  const article = CARE_ARTICLES.find((item) => item.slug === slug);
+  if (!article) return json({ error: "care_article_not_found" }, 404);
+  return catalogHtml(renderCareArticle(article));
+}
+
+function careCard(article) {
+  return `<a class="care-card" href="${article.slug === "subsidy-overview" ? "/subsidy" : `/care/${encodeURIComponent(article.slug)}`}">
+    <span>${article.official ? "官方補助資訊" : "居家照護指南"}</span>
+    <h2>${escapeHtml(article.title)}</h2>
+    <p>${escapeHtml(article.summary)}</p>
+    <b>閱讀重點 →</b>
+  </a>`;
+}
+
+function renderCareIndex() {
+  return renderCareShell("照護知識專區｜Joson-Care", `<header class="care-hero">
+    <a class="back-link" href="/liff">← 智慧服務</a>
+    <div class="eyebrow">JOSON CARE GUIDE</div>
+    <h1>照護知識專區</h1>
+    <p>把居家安全、長期臥床、失智照護、照護床保養與補助流程整理成快速好讀的入口。</p>
+  </header>
+  <main class="care-wrap">
+    <section class="care-grid">${CARE_ARTICLES.map(careCard).join("")}</section>
+    <p class="verified">內容最後查核：${escapeHtml(CARE_VERIFIED_AT)}。補助資格與額度以政府及所在地主管機關最新公告為準。</p>
+  </main>`);
+}
+
+function renderCareArticle(article) {
+  return renderCareShell(`${article.title}｜Joson-Care`, `<header class="care-hero compact">
+    <a class="back-link" href="/care">← 返回照護知識專區</a>
+    <div class="eyebrow">${article.official ? "OFFICIAL SUBSIDY GUIDE" : "HOME CARE GUIDE"}</div>
+    <h1>${escapeHtml(article.title)}</h1>
+    <p>${escapeHtml(article.summary)}</p>
+  </header>
+  <main class="article-wrap">
+    <section><h2>先掌握這三點</h2><ul>${article.points.map((point) => `<li>${escapeHtml(point)}</li>`).join("")}</ul></section>
+    <section class="notice"><h2>重要提醒</h2><p>本頁提供一般照護與產品資訊，不進行疾病診斷，也不取代醫師、護理師、治療師、照管專員或輔具專業人員的個別評估。</p></section>
+    <section class="source"><h2>資料來源</h2><p>${escapeHtml(article.sourceLabel)}，最後查核 ${escapeHtml(CARE_VERIFIED_AT)}。</p><a href="${escapeHtml(article.sourceUrl)}" target="_blank" rel="noopener noreferrer">查看原始資料 ↗</a></section>
+  </main>`);
+}
+
+function renderSubsidyPage() {
+  const article = CARE_ARTICLES.find((item) => item.slug === "subsidy-overview");
+  return renderCareShell("長照輔具與醫療床補助｜Joson-Care", `<header class="care-hero subsidy">
+    <a class="back-link" href="/care">← 返回照護知識專區</a>
+    <div class="eyebrow">1966 LONG-TERM CARE GUIDE</div>
+    <h1>長照輔具／醫療床補助</h1>
+    <p>照護床可依核定項目辦理購置或租賃；先完成需求評估與核定，再向特約輔具單位辦理。</p>
+  </header>
+  <main class="article-wrap">
+    <section><h2>快速申請流程</h2><ol><li><b>提出申請：</b>撥打 1966，或洽所在地長期照顧管理中心。</li><li><b>接受評估：</b>由照管人員及需要時的輔具專業人員確認需求。</li><li><b>取得核定：</b>確認項目、方式、額度與有效期限後再辦理。</li><li><b>特約單位購置或租賃：</b>依核定內容向特約輔具服務單位辦理。</li></ol></section>
+    <section><h2>照護床相關項目</h2><p>中央長照給付項目包含 EH01、EH02、EH03 等照顧床項目；實際適用項目由評估結果決定，不能只依產品名稱自行判斷。</p></section>
+    <section class="notice"><h2>辦理前先確認</h2><ul>${article.points.map((point) => `<li>${escapeHtml(point)}</li>`).join("")}</ul><p>各縣市可能另有身心障礙者輔具或其他方案，請勿在核定前自行購買後才申請。</p></section>
+    <section class="source"><h2>官方入口</h2><p>最後查核 ${escapeHtml(CARE_VERIFIED_AT)}。</p><a href="https://1966.gov.tw/LTC/np-6453-207.html" target="_blank" rel="noopener noreferrer">衛福部 1966 輔具及居家無障礙服務 ↗</a><a href="https://newrepat.sfaa.gov.tw/home/gov-repat-service/wlfrIntro4" target="_blank" rel="noopener noreferrer">輔具資源入口網補助說明 ↗</a><a href="https://atonline.sfaa.gov.tw/" target="_blank" rel="noopener noreferrer">輔具服務線上申辦系統 ↗</a></section>
+  </main>`);
+}
+
+function renderCareShell(title, content) {
+  return `<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#476c62"><title>${escapeHtml(title)}</title><style>
+  *{box-sizing:border-box}body{margin:0;background:#f8f5ef;color:#263d37;font-family:system-ui,-apple-system,"Noto Sans TC",sans-serif}a{color:inherit}.care-hero{padding:30px max(20px,calc((100vw - 1040px)/2));background:linear-gradient(135deg,#486f64,#244b41);color:white}.care-hero.compact{background:linear-gradient(135deg,#517a70,#31574e)}.care-hero.subsidy{background:linear-gradient(135deg,#80683d,#514527)}.back-link{display:inline-block;margin-bottom:22px;color:#e7f1ee;text-decoration:none}.eyebrow{font-size:12px;letter-spacing:.15em;opacity:.78}.care-hero h1{margin:8px 0 12px;font-size:clamp(30px,7vw,48px);line-height:1.15}.care-hero p{max-width:760px;margin:0;color:#e4efec;line-height:1.75}.care-wrap,.article-wrap{max-width:1040px;margin:auto;padding:22px 18px 56px}.care-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:15px}.care-card{display:flex;flex-direction:column;min-height:255px;padding:22px;border:1px solid #deddd6;border-radius:18px;background:#fff;text-decoration:none;box-shadow:0 8px 25px rgba(53,73,66,.06)}.care-card span{color:#56796e;font-size:12px;font-weight:850;letter-spacing:.08em}.care-card h2{margin:10px 0 8px;font-size:22px}.care-card p{margin:0;color:#65736f;line-height:1.7}.care-card b{margin-top:auto;padding-top:18px;color:#286451}.verified{margin:20px 2px;color:#6f7c78;font-size:13px;line-height:1.7}.article-wrap section{margin-bottom:16px;padding:22px;border:1px solid #deddd6;border-radius:17px;background:#fff}.article-wrap h2{margin:0 0 12px}.article-wrap p,.article-wrap li{line-height:1.8}.article-wrap li+li{margin-top:8px}.notice{background:#edf5f2!important}.source a{display:block;margin-top:9px;color:#286451;font-weight:800}.source a+a{margin-top:14px}@media(max-width:520px){.care-grid{grid-template-columns:1fr}.care-hero{padding-top:22px}.article-wrap section{padding:18px}}
+  </style></head><body>${content}</body></html>`;
 }
 
 function renderCatalogShell(title, content) {
@@ -614,6 +829,19 @@ async function handleLineLoginCallback(request, env) {
       "set-cookie": "joson_line_state=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0",
     },
   });
+}
+
+async function serveLiffVideosPage(env, url) {
+  if (!env.ASSETS) return html(simplePage("影音頻道尚未啟用", "Worker 靜態資產綁定尚未設定。"), 503);
+  const assetUrl = new URL("/liff-videos.html", url.origin);
+  const response = await env.ASSETS.fetch(new Request(assetUrl));
+  if (!response.ok) return html(simplePage("影音頻道暫時無法開啟", "請稍後再試。"), 502);
+  const headers = new Headers(response.headers);
+  headers.set("cache-control", "public, max-age=300");
+  headers.set("content-security-policy", "default-src 'self'; script-src 'self' https://static.line-scdn.net; style-src 'self'; connect-src 'self' https://*.line.me https://*.line-scdn.net; img-src 'self' https://i.ytimg.com data:; frame-src https://www.youtube-nocookie.com; base-uri 'none'; object-src 'none'; form-action 'none'");
+  headers.set("referrer-policy", "strict-origin-when-cross-origin");
+  headers.set("x-content-type-options", "nosniff");
+  return cors(new Response(response.body, { status: response.status, headers }));
 }
 
 function renderLiffPage(env) {

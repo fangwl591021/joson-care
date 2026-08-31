@@ -8,6 +8,7 @@
 - LINE Messaging API Webhook URL: `https://joson-care.fangwl591021.workers.dev/line-webhook`
 - LINE Login Callback URL: `https://joson-care.fangwl591021.workers.dev/callback`
 - LIFF Endpoint URL: `https://joson-care.fangwl591021.workers.dev/liff`
+- LIFF video channel route: `https://joson-care.fangwl591021.workers.dev/liff/videos`
 - Health Check: `https://joson-care.fangwl591021.workers.dev/health`
 
 ## LINE IDs
@@ -37,6 +38,8 @@ npx wrangler secret put ADMIN_ACCESS_KEY
 - `GET /callback` — LINE Login callback
 - `GET /health` — Worker health endpoint
 - `GET /api/config` — non-secret LIFF / LINE Login IDs
+- `GET /liff/videos` — mobile-first LIFF YouTube channel with embedded playback
+- `GET /api/videos` — cached Joson-Care YouTube RSS feed API with visit, brand, tutorial and fallback categories
 - `GET /products` — local Traditional Chinese product catalog
 - `GET /products/:slug` — local product detail page
 - `GET /api/products` — structured product catalog API (`q` and `featured=1` filters supported)
@@ -79,15 +82,13 @@ npx wrangler d1 migrations list joson-care-crm --remote
 npx wrangler d1 migrations apply joson-care-crm --remote
 ```
 
-`/admin` stays unavailable until `ADMIN_ACCESS_KEY` is configured as a Worker Secret. Rich Menu templates, projects, editable drafts, versions and publish runs are stored in D1; uploaded template and project images use the private `RICH_MENU_ASSETS` R2 binding. The Rich Menu Studio mirrors the Smart-Menu-Studio workflow with separate project list, project builder, template center, template editor, project content editor, LINE phone preview, URI/message/postback/page-switch actions, enable/disable controls, default-page switching, publish confirmation and history. Draft saves validate LINE dimensions, bounds, overlap and action fields but never publish automatically. The Joson default project keeps its custom asymmetric layout with a large smart-advisor entry, four real product images and a service rail instead of a stock six-grid template.
+`/admin` stays unavailable until `ADMIN_ACCESS_KEY` is configured as a Worker Secret. Rich Menu templates, projects, editable drafts, versions and publish runs are stored in D1; uploaded template and project images use the private `RICH_MENU_ASSETS` R2 binding. The Rich Menu Studio mirrors the Smart-Menu-Studio workflow with separate project list, project builder, template center, template editor, project content editor, LINE phone preview, URI/message/postback/page-switch actions, enable/disable controls, default-page switching, publish confirmation and history. Draft saves validate LINE dimensions, bounds, overlap and action fields but never publish automatically. The Joson default project keeps its custom asymmetric layout with a large smart-advisor entry, a warm home-care bed, Facebook／YouTube／LinkedIn buttons and a four-service rail instead of a stock six-grid template.
 
-Regenerate its deterministic PNG after an intentional visual change:
-
-```powershell
-& "C:\Users\User\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe" scripts\render-rich-menu.py
-```
+The v2 artwork is `public/assets/rich-menu/joson-care-social-v2.png`; keep it at 2500 × 1686 and no more than 1,000,000 bytes.
 
 The Admin publish action validates the definition and page-switch targets, creates a new LINE Rich Menu, uploads the PNG/JPEG, updates its stable alias, sets it as default and verifies the live default before any best-effort cleanup of the prior menu. If Alias or default switching fails, it attempts to restore the previous live state before recording the failed run.
+
+The YouTube button uses `https://liff.line.me/2011335134-ccbJ33yx/videos`. Set LIFF app `2011335134-ccbJ33yx` to **Tall** in LINE Developers Console and keep its endpoint URL at `https://joson-care.fangwl591021.workers.dev/liff`; LINE appends `/videos` and opens the embedded video channel at `/liff/videos`.
 
 ## Local product snapshot
 
