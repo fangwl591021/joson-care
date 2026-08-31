@@ -65,7 +65,7 @@ test("knowledge menu hotspots follow the visible three-column mobile layout", ()
   assert.deepEqual(CARE_RICH_MENU.areas[6].bounds, { x: 965, y: 1275, width: 1500, height: 411 });
 });
 
-test("knowledge menu opens full official website articles through LIFF TALL", () => {
+test("knowledge menu opens official website articles directly through LIFF TALL", () => {
   assert.deepEqual(CARE_RICH_MENU.areas.slice(1).map((area) => area.action.uri), [
     "https://liff.line.me/2011335134-vQ4CQiOV?topic=overview",
     "https://liff.line.me/2011335134-vQ4CQiOV?topic=fall",
@@ -77,11 +77,11 @@ test("knowledge menu opens full official website articles through LIFF TALL", ()
   const worker = fs.readFileSync(new URL("../worker.js", import.meta.url), "utf8");
   assert.match(worker, /\/liff\/knowledge/);
   assert.match(worker, /OFFICIAL_KNOWLEDGE_URLS/);
-  assert.match(worker, /await liff\.init/);
-  assert.match(worker, /viewType==='tall'/);
-  assert.match(worker, /env\.KNOWLEDGE_LIFF_ID \|\| KNOWLEDGE_LIFF_ID/);
-  assert.ok(worker.indexOf("await liff.init") < worker.indexOf("window.location.replace"));
-  assert.match(worker, /liff\.closeWindow/);
+  assert.match(worker, /function redirectLiffKnowledge/);
+  assert.match(worker, /status: 302/);
+  assert.match(worker, /location: targetUrl/);
+  assert.doesNotMatch(worker, /正在開啟官網完整文章/);
+  assert.doesNotMatch(worker, /正在連接 LINE LIFF TALL/);
 });
 
 test("YouTube Rich Menu action opens a LIFF video channel with embedded playback", () => {
