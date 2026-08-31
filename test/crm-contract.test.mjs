@@ -31,13 +31,23 @@ test("two-page Rich Menu uses top tabs and valid actions", () => {
 });
 
 test("custom Rich Menu PNG meets LINE dimensions and file-size limit", () => {
-  for (const filename of ["joson-care-main-v3.png", "joson-care-knowledge-v3.png"]) {
+  for (const filename of ["joson-care-main-v4.png", "joson-care-knowledge-v4.png"]) {
     const image = fs.readFileSync(new URL(`../public/assets/rich-menu/${filename}`, import.meta.url));
     assert.equal(image.toString("ascii", 1, 4), "PNG");
     assert.equal(image.readUInt32BE(16), 2500);
     assert.equal(image.readUInt32BE(20), 1686);
     assert.ok(image.byteLength > 0 && image.byteLength <= 1_000_000);
   }
+});
+
+test("knowledge menu hotspots follow the visible three-column mobile layout", () => {
+  assert.deepEqual(CARE_RICH_MENU.areas.slice(2, 5).map((area) => area.bounds), [
+    { x: 965, y: 245, width: 485, height: 465 },
+    { x: 1470, y: 245, width: 485, height: 465 },
+    { x: 1980, y: 245, width: 485, height: 465 },
+  ]);
+  assert.deepEqual(CARE_RICH_MENU.areas[5].bounds, { x: 965, y: 735, width: 1500, height: 540 });
+  assert.deepEqual(CARE_RICH_MENU.areas[6].bounds, { x: 965, y: 1275, width: 1500, height: 411 });
 });
 
 test("YouTube Rich Menu action opens a LIFF video channel with embedded playback", () => {

@@ -4,11 +4,13 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 ROOT = Path(__file__).resolve().parents[1]
 ASSET_DIR = ROOT / "public" / "assets" / "rich-menu"
 WIDTH, HEIGHT = 2500, 1686
-FONT_PATH = Path(r"C:\Windows\Fonts\NotoSansTC-VF.ttf")
+FONT_REGULAR_PATH = Path(r"C:\Windows\Fonts\msjh.ttc")
+FONT_BOLD_PATH = Path(r"C:\Windows\Fonts\msjhbd.ttc")
 
 
-def font(size, bold=False):
-    return ImageFont.truetype(str(FONT_PATH), size=size, index=0)
+def font(size, bold=True):
+    path = FONT_BOLD_PATH if bold else FONT_REGULAR_PATH
+    return ImageFont.truetype(str(path), size=size, index=0)
 
 
 def fit_background(path):
@@ -31,8 +33,8 @@ def panel(draw, box, fill="#FFFCF7E8", outline="#FFFFFF", radius=34, width=4):
 def tabs(draw, active):
     panel(draw, (18, 16, 1237, 226), "#F2E5E9F5" if active == "main" else "#F9F6F0EC", "#B8788D", 46, 5)
     panel(draw, (1263, 16, 2482, 226), "#E5EEF9F5" if active == "knowledge" else "#F9F6F0EC", "#7395BA", 46, 5)
-    centered(draw, (18, 16, 1237, 226), "智慧服務", 72, "#684B54" if active == "main" else "#5F6D68")
-    centered(draw, (1263, 16, 2482, 226), "照護知識", 72, "#526B87" if active == "knowledge" else "#5F6D68")
+    centered(draw, (18, 16, 1237, 226), "智慧服務", 84, "#684B54" if active == "main" else "#40544F")
+    centered(draw, (1263, 16, 2482, 226), "照護知識", 84, "#526B87" if active == "knowledge" else "#40544F")
 
 
 def draw_arrow(draw, x, y, color):
@@ -46,26 +48,19 @@ def render_main():
     overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     tabs(draw, "main")
-    panel(draw, (36, 270, 955, 1642), "#FFFDF7D9", "#FFFFFF", 38, 5)
-    draw.text((88, 328), "JOSON CARE", font=font(38), fill="#2B6B5A")
-    draw.multiline_text((84, 410), "智慧照護\n顧問", font=font(112), fill="#153F36", spacing=4, stroke_width=1)
-    draw.multiline_text((88, 670), "從生活需求開始\n陪你找到安心選擇", font=font(44), fill="#395D54", spacing=14)
-    draw.rounded_rectangle((85, 875, 610, 1005), radius=64, fill="#1D6755")
-    draw.text((150, 906), "開始諮詢", font=font(52), fill="white")
-    draw_arrow(draw, 545, 941, "white")
+    draw.text((52, 250), "智慧照護顧問", font=font(76), fill="#123D34", stroke_width=3, stroke_fill="#FFFDF6")
 
-    panel(draw, (995, 270, 2465, 755), "#FFFCF4D8", "#FFFFFF", 36, 5)
-    draw.text((1047, 314), "全系列產品", font=font(72), fill="#163F36")
-    draw.text((1052, 407), "85 款產品快速瀏覽・不必等待原網站", font=font(34), fill="#587169")
-    draw.rounded_rectangle((1050, 575, 1455, 682), radius=52, fill="#E4EFEA")
-    centered(draw, (1050, 575, 1455, 682), "查看產品", 38, "#1A5A49")
+    draw.text((1015, 285), "全系列產品", font=font(92), fill="#123D34", stroke_width=3, stroke_fill="#FFFDF6")
+    draw.text((1022, 405), "85 款快速瀏覽", font=font(52), fill="#284F45", stroke_width=2, stroke_fill="#FFFDF6")
+    draw.rounded_rectangle((1020, 545, 1490, 685), radius=68, fill="#17624F")
+    centered(draw, (1020, 545, 1490, 685), "查看產品", 49, "white")
 
     socials = [(1015, 780, 1475, "f", "Facebook", "#E7F0FF", "#2476D8"), (1490, 780, 1995, "▶", "YouTube", "#FFF0F0", "#C9362A"), (2010, 780, 2465, "in", "LinkedIn", "#EAF4FA", "#2371A5")]
     for left, top, right, mark, label, fill, color in socials:
         panel(draw, (left, top, right, 945), fill + "F2", color, 28, 4)
         draw.ellipse((left + 25, top + 34, left + 120, top + 129), fill=color)
         centered(draw, (left + 25, top + 34, left + 120, top + 129), mark, 34 if mark == "in" else 46, "white")
-        centered(draw, (left + 120, top + 15, right - 12, 945), label, 37, "#173E36")
+        centered(draw, (left + 120, top + 15, right - 12, 945), label, 46, "#173E36")
 
     cards = [
         (995, 975, 1360, "床型\n比較", "依需求篩選", "#E9F3EF", "#245E50"),
@@ -75,11 +70,11 @@ def render_main():
     ]
     for left, top, right, title, sub, fill, color in cards:
         panel(draw, (left, top, right, 1642), fill + "F4", "#FFFFFF", 28, 4)
-        centered(draw, (left + 18, top + 80, right - 18, top + 370), title, 53, color, 2)
-        centered(draw, (left + 15, top + 400, right - 15, top + 520), sub, 28, color)
+        centered(draw, (left + 18, top + 72, right - 18, top + 390), title, 62, color, 2)
+        centered(draw, (left + 12, top + 410, right - 12, top + 555), sub, 40, color)
         draw.rounded_rectangle((left + 105, 1572, right - 105, 1588), radius=8, fill=color)
     image = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
-    save(image, ASSET_DIR / "joson-care-main-v3.png")
+    save(image, ASSET_DIR / "joson-care-main-v4.png")
 
 
 def render_knowledge():
@@ -87,32 +82,24 @@ def render_knowledge():
     overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     tabs(draw, "knowledge")
-    panel(draw, (38, 270, 930, 1642), "#FFFDF7D5", "#FFFFFF", 38, 5)
-    draw.text((92, 326), "JOSON CARE GUIDE", font=font(35), fill="#477365")
-    draw.multiline_text((86, 410), "照護知識\n專區", font=font(103), fill="#173E36", spacing=5, stroke_width=1)
-    draw.multiline_text((90, 660), "從居家安全到床邊照護\n把重要資訊整理給你", font=font(40), fill="#405F57", spacing=14)
-    draw.rounded_rectangle((88, 900, 610, 1027), radius=62, fill="#1D6755")
-    draw.text((150, 930), "查看全部", font=font(49), fill="white")
-    draw_arrow(draw, 545, 963, "white")
+    draw.text((52, 250), "照護知識專區", font=font(76), fill="#123D34", stroke_width=3, stroke_fill="#FFFDF6")
 
     cards = [
-        (965, 270, 1705, 665, "防跌與\n居家安全", "動線・照明・床邊高度", "#E9F3EF", "#265F51"),
-        (1725, 270, 2465, 665, "中風／\n長期臥床", "移位・翻身・照護空間", "#E8F0F9", "#315E89"),
-        (965, 685, 1705, 1080, "失智症\n居家照護", "熟悉環境・夜間動線", "#F8F0E6", "#875B2F"),
-        (1725, 685, 2465, 1080, "照護床操作\n與保養", "日常檢查・異常報修", "#F7EDEE", "#824858"),
+        (965, 245, 1450, 710, "防跌與\n居家安全", "動線・照明・床高", "#E9F3EF", "#265F51"),
+        (1470, 245, 1955, 710, "中風／\n長期臥床", "移位・翻身・空間", "#E8F0F9", "#315E89"),
+        (1980, 245, 2465, 710, "失智症\n居家照護", "熟悉環境・夜間動線", "#F8F0E6", "#875B2F"),
     ]
     for left, top, right, bottom, title, sub, fill, color in cards:
-        panel(draw, (left, top, right, bottom), fill + "F2", "#FFFFFF", 30, 4)
-        centered(draw, (left + 32, top + 35, right - 32, top + 245), title, 54, color, 2)
-        centered(draw, (left + 26, top + 255, right - 26, bottom - 24), sub, 29, color)
-    panel(draw, (965, 1100, 2465, 1642), "#FFF8E8F2", "#D8B56D", 34, 5)
-    draw.text((1030, 1160), "長照輔具／醫療床補助", font=font(67), fill="#695229")
-    draw.text((1035, 1260), "申請流程・評估・特約單位", font=font(35), fill="#806B42")
-    draw.text((1035, 1375), "先評估，再購置或租賃", font=font(45), fill="#60491E")
-    draw.rounded_rectangle((1970, 1395, 2375, 1525), radius=64, fill="#80652E")
-    centered(draw, (1970, 1395, 2375, 1525), "了解補助", 42, "white")
+        centered(draw, (left + 20, top + 40, right - 20, top + 275), title, 58, color, 2)
+        centered(draw, (left + 12, top + 290, right - 12, bottom - 25), sub, 40, color)
+    draw.multiline_text((1020, 790), "照護床操作\n與保養", font=font(82), fill="#6F3F3F", spacing=0, stroke_width=3, stroke_fill="#FFFDF6")
+    draw.text((1028, 1015), "日常檢查・異常報修", font=font(45), fill="#704747", stroke_width=2, stroke_fill="#FFFDF6")
+    draw.text((1010, 1315), "長照輔具／醫療床補助", font=font(78), fill="#664E22", stroke_width=2, stroke_fill="#FFFDF6")
+    draw.text((1018, 1430), "先評估，再購置或租賃", font=font(52), fill="#5D471C", stroke_width=2, stroke_fill="#FFFDF6")
+    draw.rounded_rectangle((1970, 1430, 2375, 1560), radius=64, fill="#80652E")
+    centered(draw, (1970, 1430, 2375, 1560), "了解補助", 42, "white")
     image = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
-    save(image, ASSET_DIR / "joson-care-knowledge-v3.png")
+    save(image, ASSET_DIR / "joson-care-knowledge-v4.png")
 
 
 def save(image, path):

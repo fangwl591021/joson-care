@@ -15,7 +15,7 @@ const INTENT_RULES = [
 ];
 
 export const DEFAULT_RICH_MENU = Object.freeze({
-  name: "Joson 智慧服務雙頁選單 v3",
+  name: "Joson 智慧服務雙頁選單 v4",
   chatBarText: "Joson 智慧服務",
   selected: true,
   size: { width: 2500, height: 1686 },
@@ -34,25 +34,25 @@ export const DEFAULT_RICH_MENU = Object.freeze({
 });
 
 export const CARE_RICH_MENU = Object.freeze({
-  name: "Joson 照護知識雙頁選單 v3",
+  name: "Joson 照護知識雙頁選單 v4",
   chatBarText: "Joson 照護知識",
   selected: false,
   size: { width: 2500, height: 1686 },
   areas: [
     richMenuSwitchArea(0, 0, 1250, 240, "切換智慧服務", "joson-care-main", "joson-care-main-v3"),
     richMenuUriArea(0, 240, 960, 1446, "照護知識專區", "https://joson-care.fangwl591021.workers.dev/care"),
-    richMenuUriArea(965, 270, 740, 395, "防跌與居家安全", "https://joson-care.fangwl591021.workers.dev/care/fall-prevention"),
-    richMenuUriArea(1725, 270, 740, 395, "中風與長期臥床", "https://joson-care.fangwl591021.workers.dev/care/bedridden-stroke"),
-    richMenuUriArea(965, 685, 740, 395, "失智症居家照護", "https://joson-care.fangwl591021.workers.dev/care/dementia-care"),
-    richMenuUriArea(1725, 685, 740, 395, "照護床操作與保養", "https://joson-care.fangwl591021.workers.dev/care/bed-operation-maintenance"),
-    richMenuUriArea(965, 1100, 1500, 542, "長照輔具與醫療床補助", "https://joson-care.fangwl591021.workers.dev/subsidy"),
+    richMenuUriArea(965, 245, 485, 465, "防跌與居家安全", "https://joson-care.fangwl591021.workers.dev/care/fall-prevention"),
+    richMenuUriArea(1470, 245, 485, 465, "中風與長期臥床", "https://joson-care.fangwl591021.workers.dev/care/bedridden-stroke"),
+    richMenuUriArea(1980, 245, 485, 465, "失智症居家照護", "https://joson-care.fangwl591021.workers.dev/care/dementia-care"),
+    richMenuUriArea(965, 735, 1500, 540, "照護床操作與保養", "https://joson-care.fangwl591021.workers.dev/care/bed-operation-maintenance"),
+    richMenuUriArea(965, 1275, 1500, 411, "長照輔具與醫療床補助", "https://joson-care.fangwl591021.workers.dev/subsidy"),
   ],
 });
 
 const RICH_MENU_PROJECT_ID = "joson-care-main-v3";
 const RICH_MENU_TEMPLATE_ID = "joson-two-page-main-v3";
 const RICH_MENU_ALIAS_ID = "joson-care-main";
-const RICH_MENU_IMAGE_PATH = "/assets/rich-menu/joson-care-main-v3.png";
+const RICH_MENU_IMAGE_PATH = "/assets/rich-menu/joson-care-main-v4.png";
 
 function richMenuArea(x, y, width, height, label, action) {
   return {
