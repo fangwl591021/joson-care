@@ -1,5 +1,6 @@
 const ADMIN_COOKIE = "joson_admin_session";
 const ADMIN_SESSION_SECONDS = 8 * 60 * 60;
+const KNOWLEDGE_LIFF_URL = "https://liff.line.me/2011335134-vQ4CQiOV";
 
 const INTENT_RULES = [
   { pattern: /床面希望較低|床面較低|低床|上下床|怕太高/, intent: "low_bed", tagId: "tag_low_bed", productModel: "ES-18UDS", stage: "selecting" },
@@ -35,18 +36,18 @@ export const DEFAULT_RICH_MENU = Object.freeze({
 });
 
 export const CARE_RICH_MENU = Object.freeze({
-  name: "Joson 照護知識雙頁選單 v7",
+  name: "Joson 照護知識雙頁選單 v8",
   chatBarText: "Joson 照護知識",
   selected: false,
   size: { width: 2500, height: 1686 },
   areas: [
     richMenuSwitchArea(0, 0, 1250, 240, "切換智慧服務", "joson-care-main", "joson-care-main-v3"),
-    richMenuUriArea(0, 240, 960, 1446, "照護知識專區", "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=overview"),
-    richMenuUriArea(965, 245, 485, 465, "防跌與居家安全", "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=fall"),
-    richMenuUriArea(1470, 245, 485, 465, "中風與長期臥床", "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=stroke"),
-    richMenuUriArea(1980, 245, 485, 465, "失智症居家照護", "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=dementia"),
-    richMenuUriArea(965, 735, 1500, 540, "照護床操作與保養", "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=maintenance"),
-    richMenuUriArea(965, 1275, 1500, 411, "長照輔具與醫療床補助", "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=subsidy"),
+    richMenuUriArea(0, 240, 960, 1446, "照護知識專區", `${KNOWLEDGE_LIFF_URL}?topic=overview`),
+    richMenuUriArea(965, 245, 485, 465, "防跌與居家安全", `${KNOWLEDGE_LIFF_URL}?topic=fall`),
+    richMenuUriArea(1470, 245, 485, 465, "中風與長期臥床", `${KNOWLEDGE_LIFF_URL}?topic=stroke`),
+    richMenuUriArea(1980, 245, 485, 465, "失智症居家照護", `${KNOWLEDGE_LIFF_URL}?topic=dementia`),
+    richMenuUriArea(965, 735, 1500, 540, "照護床操作與保養", `${KNOWLEDGE_LIFF_URL}?topic=maintenance`),
+    richMenuUriArea(965, 1275, 1500, 411, "長照輔具與醫療床補助", `${KNOWLEDGE_LIFF_URL}?topic=subsidy`),
   ],
 });
 

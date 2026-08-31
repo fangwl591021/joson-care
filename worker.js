@@ -3,11 +3,11 @@ import { CARE_ARTICLES, CARE_VERIFIED_AT } from "./data/care.js";
 import { handleAdminRequest, postbackToText, recordLineInteraction } from "./crm.js";
 
 const LIFF_ID = "2011335134-ccbJ33yx";
+const KNOWLEDGE_LIFF_ID = "2011335134-vQ4CQiOV";
 const LINE_LOGIN_CHANNEL_ID = "2011335134";
 const WORKER_ORIGIN = "https://joson-care.fangwl591021.workers.dev";
 const VIDEO_LIFF_PATH = "/videos";
 const SHARE_LIFF_PATH = "/share";
-const KNOWLEDGE_LIFF_PATH = "/knowledge";
 const YOUTUBE_CHANNEL_ID = "UClq-e-Ve7LZ0Dx1o5pPruwA";
 const YOUTUBE_CHANNEL_URL = `https://www.youtube.com/channel/${YOUTUBE_CHANNEL_ID}`;
 const FACEBOOK_URL = "https://www.facebook.com/JosonCare";
@@ -70,7 +70,7 @@ export default {
     if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
 
     try {
-      if (path === "/health") return json({ ok: true, service: "joson-care", version: "1.6.0", products: PRODUCTS.length, careArticles: CARE_ARTICLES.length, crm: Boolean(env.CRM_DB), videos: true, sharing: true, knowledgeLiff: true });
+      if (path === "/health") return json({ ok: true, service: "joson-care", version: "1.6.1", products: PRODUCTS.length, careArticles: CARE_ARTICLES.length, crm: Boolean(env.CRM_DB), videos: true, sharing: true, knowledgeLiff: true });
       if (path === "/admin" || path.startsWith("/admin/") || path.startsWith("/api/admin/")) return handleAdminRequest(request, env, url);
       if (path === "/line-webhook") return handleLineWebhook(request, env, ctx);
       if (request.method === "GET" && path === "/liff/videos") return serveLiffVideosPage(env, url);
@@ -89,12 +89,14 @@ export default {
       if (path === "/callback") return handleLineLoginCallback(request, env);
       if (path === "/api/config") {
         const liffId = env.LIFF_ID || LIFF_ID;
+        const knowledgeLiffId = env.KNOWLEDGE_LIFF_ID || KNOWLEDGE_LIFF_ID;
         return json({
           liffId,
+          knowledgeLiffId,
           lineLoginChannelId: env.LINE_LOGIN_CHANNEL_ID || LINE_LOGIN_CHANNEL_ID,
           videoLiffUrl: `https://liff.line.me/${liffId}${VIDEO_LIFF_PATH}`,
           shareLiffUrl: `https://liff.line.me/${liffId}${SHARE_LIFF_PATH}`,
-          knowledgeLiffUrl: `https://liff.line.me/${liffId}${KNOWLEDGE_LIFF_PATH}`,
+          knowledgeLiffUrl: `https://liff.line.me/${knowledgeLiffId}`,
           social: { facebook: FACEBOOK_URL, youtube: YOUTUBE_CHANNEL_URL, linkedin: LINKEDIN_URL },
         });
       }
@@ -920,7 +922,7 @@ function renderSharePage(env) {
 }
 
 function renderLiffKnowledgePage(env, url) {
-  const liffId = env.LIFF_ID || LIFF_ID;
+  const liffId = env.KNOWLEDGE_LIFF_ID || KNOWLEDGE_LIFF_ID;
   const topic = String(url.searchParams.get("topic") || "overview");
   const targetUrl = OFFICIAL_KNOWLEDGE_URLS[topic];
   if (!targetUrl) return simplePage("找不到照護文章", "請回到 LINE 圖文選單重新選擇照護主題。");

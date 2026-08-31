@@ -15,6 +15,7 @@
 
 - LINE Login Channel ID: `2011335134`
 - LIFF ID: `2011335134-ccbJ33yx`
+- Knowledge LIFF ID: `2011335134-vQ4CQiOV` (Tall; endpoint `/liff/knowledge`)
 
 ## Required Cloudflare Worker secrets
 
@@ -89,6 +90,8 @@ The v2 artwork is `public/assets/rich-menu/joson-care-social-v2.png`; keep it at
 The Admin publish action validates the definition and page-switch targets, creates a new LINE Rich Menu, uploads the PNG/JPEG, updates its stable alias, sets it as default and verifies the live default before any best-effort cleanup of the prior menu. If Alias or default switching fails, it attempts to restore the previous live state before recording the failed run.
 
 The YouTube button uses `https://liff.line.me/2011335134-ccbJ33yx/videos`. Set LIFF app `2011335134-ccbJ33yx` to **Tall** in LINE Developers Console and keep its endpoint URL at `https://joson-care.fangwl591021.workers.dev/liff`; LINE appends `/videos` and opens the embedded video channel at `/liff/videos`.
+
+The care-knowledge page uses the dedicated Tall LIFF app `2011335134-vQ4CQiOV`, whose endpoint URL is `https://joson-care.fangwl591021.workers.dev/liff/knowledge`. Rich Menu actions append only the `topic` query parameter so this LIFF remains isolated from video and sharing routes.
 
 ## Local product snapshot
 

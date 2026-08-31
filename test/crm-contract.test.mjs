@@ -67,18 +67,19 @@ test("knowledge menu hotspots follow the visible three-column mobile layout", ()
 
 test("knowledge menu opens full official website articles through LIFF TALL", () => {
   assert.deepEqual(CARE_RICH_MENU.areas.slice(1).map((area) => area.action.uri), [
-    "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=overview",
-    "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=fall",
-    "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=stroke",
-    "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=dementia",
-    "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=maintenance",
-    "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=subsidy",
+    "https://liff.line.me/2011335134-vQ4CQiOV?topic=overview",
+    "https://liff.line.me/2011335134-vQ4CQiOV?topic=fall",
+    "https://liff.line.me/2011335134-vQ4CQiOV?topic=stroke",
+    "https://liff.line.me/2011335134-vQ4CQiOV?topic=dementia",
+    "https://liff.line.me/2011335134-vQ4CQiOV?topic=maintenance",
+    "https://liff.line.me/2011335134-vQ4CQiOV?topic=subsidy",
   ]);
   const worker = fs.readFileSync(new URL("../worker.js", import.meta.url), "utf8");
   assert.match(worker, /\/liff\/knowledge/);
   assert.match(worker, /OFFICIAL_KNOWLEDGE_URLS/);
   assert.match(worker, /await liff\.init/);
   assert.match(worker, /viewType==='tall'/);
+  assert.match(worker, /env\.KNOWLEDGE_LIFF_ID \|\| KNOWLEDGE_LIFF_ID/);
   assert.ok(worker.indexOf("await liff.init") < worker.indexOf("window.location.replace"));
   assert.match(worker, /liff\.closeWindow/);
 });
