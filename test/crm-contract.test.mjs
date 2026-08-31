@@ -65,15 +65,22 @@ test("knowledge menu hotspots follow the visible three-column mobile layout", ()
   assert.deepEqual(CARE_RICH_MENU.areas[6].bounds, { x: 965, y: 1275, width: 1500, height: 411 });
 });
 
-test("knowledge menu opens full official website articles", () => {
+test("knowledge menu opens full official website articles through LIFF TALL", () => {
   assert.deepEqual(CARE_RICH_MENU.areas.slice(1).map((area) => area.action.uri), [
-    "https://www.joson-care.com/article.php?lang=tw&tb=9&cid=17",
-    "https://www.joson-care.com/article_d.php?id=542&lang=tw&tb=4",
-    "https://www.joson-care.com/article_d.php?id=465&lang=tw&tb=4",
-    "https://www.joson-care.com/article_d.php?id=455&lang=tw&tb=4",
-    "https://www.joson-care.com/article_d.php?id=303&lang=tw&tb=4",
-    "https://www.joson-care.com/article_d.php?id=313&lang=tw&tb=4",
+    "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=overview",
+    "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=fall",
+    "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=stroke",
+    "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=dementia",
+    "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=maintenance",
+    "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=subsidy",
   ]);
+  const worker = fs.readFileSync(new URL("../worker.js", import.meta.url), "utf8");
+  assert.match(worker, /\/liff\/knowledge/);
+  assert.match(worker, /OFFICIAL_KNOWLEDGE_URLS/);
+  assert.match(worker, /await liff\.init/);
+  assert.match(worker, /viewType==='tall'/);
+  assert.ok(worker.indexOf("await liff.init") < worker.indexOf("window.location.replace"));
+  assert.match(worker, /liff\.closeWindow/);
 });
 
 test("YouTube Rich Menu action opens a LIFF video channel with embedded playback", () => {

@@ -7,10 +7,19 @@ const LINE_LOGIN_CHANNEL_ID = "2011335134";
 const WORKER_ORIGIN = "https://joson-care.fangwl591021.workers.dev";
 const VIDEO_LIFF_PATH = "/videos";
 const SHARE_LIFF_PATH = "/share";
+const KNOWLEDGE_LIFF_PATH = "/knowledge";
 const YOUTUBE_CHANNEL_ID = "UClq-e-Ve7LZ0Dx1o5pPruwA";
 const YOUTUBE_CHANNEL_URL = `https://www.youtube.com/channel/${YOUTUBE_CHANNEL_ID}`;
 const FACEBOOK_URL = "https://www.facebook.com/JosonCare";
 const LINKEDIN_URL = "https://www.linkedin.com/company/joson-care/";
+const OFFICIAL_KNOWLEDGE_URLS = Object.freeze({
+  overview: "https://www.joson-care.com/article.php?lang=tw&tb=9&cid=17",
+  fall: "https://www.joson-care.com/article_d.php?id=542&lang=tw&tb=4",
+  stroke: "https://www.joson-care.com/article_d.php?id=465&lang=tw&tb=4",
+  dementia: "https://www.joson-care.com/article_d.php?id=455&lang=tw&tb=4",
+  maintenance: "https://www.joson-care.com/article_d.php?id=303&lang=tw&tb=4",
+  subsidy: "https://www.joson-care.com/article_d.php?id=313&lang=tw&tb=4",
+});
 const VIDEO_CATEGORIES = Object.freeze([
   { id: "tutorial", label: "產品使用／教學" },
   { id: "visit", label: "參訪交流" },
@@ -61,11 +70,12 @@ export default {
     if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
 
     try {
-      if (path === "/health") return json({ ok: true, service: "joson-care", version: "1.5.1", products: PRODUCTS.length, careArticles: CARE_ARTICLES.length, crm: Boolean(env.CRM_DB), videos: true, sharing: true });
+      if (path === "/health") return json({ ok: true, service: "joson-care", version: "1.6.0", products: PRODUCTS.length, careArticles: CARE_ARTICLES.length, crm: Boolean(env.CRM_DB), videos: true, sharing: true, knowledgeLiff: true });
       if (path === "/admin" || path.startsWith("/admin/") || path.startsWith("/api/admin/")) return handleAdminRequest(request, env, url);
       if (path === "/line-webhook") return handleLineWebhook(request, env, ctx);
       if (request.method === "GET" && path === "/liff/videos") return serveLiffVideosPage(env, url);
       if (request.method === "GET" && path === "/liff/share") return html(renderSharePage(env));
+      if (request.method === "GET" && path === "/liff/knowledge") return html(renderLiffKnowledgePage(env, url));
       if (request.method === "GET" && path === "/api/videos") return handleYoutubeVideos(request, ctx);
       if (path === "/liff" || path === "/") return html(renderLiffPage(env));
       if (request.method === "GET" && path === "/products") return catalogHtml(renderProductsPage(url));
@@ -84,6 +94,7 @@ export default {
           lineLoginChannelId: env.LINE_LOGIN_CHANNEL_ID || LINE_LOGIN_CHANNEL_ID,
           videoLiffUrl: `https://liff.line.me/${liffId}${VIDEO_LIFF_PATH}`,
           shareLiffUrl: `https://liff.line.me/${liffId}${SHARE_LIFF_PATH}`,
+          knowledgeLiffUrl: `https://liff.line.me/${liffId}${KNOWLEDGE_LIFF_PATH}`,
           social: { facebook: FACEBOOK_URL, youtube: YOUTUBE_CHANNEL_URL, linkedin: LINKEDIN_URL },
         });
       }
@@ -902,6 +913,46 @@ function renderSharePage(env) {
       }finally{button.disabled=false;}
     });
   }catch(error){status.textContent='LIFF 初始化失敗：'+(error.message||error);}
+})();
+</script>
+</body>
+</html>`;
+}
+
+function renderLiffKnowledgePage(env, url) {
+  const liffId = env.LIFF_ID || LIFF_ID;
+  const topic = String(url.searchParams.get("topic") || "overview");
+  const targetUrl = OFFICIAL_KNOWLEDGE_URLS[topic];
+  if (!targetUrl) return simplePage("找不到照護文章", "請回到 LINE 圖文選單重新選擇照護主題。");
+  return `<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#17624f">
+  <title>開啟 Joson-Care 照護知識</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f4f7f5;color:#173e36;font-family:system-ui,-apple-system,"Microsoft JhengHei",sans-serif}.wrap{min-height:100vh;display:grid;place-items:center;padding:28px}.card{width:min(100%,560px);padding:30px 24px;border:1px solid #d9e5e1;border-radius:24px;background:#fff;text-align:center;box-shadow:0 16px 48px #163f3714}.mark{display:grid;place-items:center;width:72px;height:72px;margin:0 auto 18px;border-radius:50%;background:#e2f0eb;color:#17624f;font-size:34px;font-weight:900}.card h1{margin:0 0 12px;font-size:29px;line-height:1.3}.card p{margin:0;color:#506b64;font-size:18px;line-height:1.7}.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:22px}.actions a,.actions button{min-height:56px;border:0;border-radius:14px;padding:14px;font-size:18px;font-weight:900;text-decoration:none}.open{background:#17624f;color:#fff}.close{background:#edf4f1;color:#175b4c}@media(max-width:420px){.actions{grid-template-columns:1fr}.card h1{font-size:26px}}
+  </style>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+</head>
+<body>
+  <main class="wrap"><section class="card">
+    <div class="mark">知</div>
+    <h1>正在開啟官網完整文章</h1>
+    <p id="status">正在連接 LINE LIFF TALL…</p>
+    <div class="actions"><a class="open" href=${JSON.stringify(targetUrl)}>立即開啟</a><button id="close" class="close" type="button">關閉</button></div>
+  </section></main>
+<script>
+(async()=>{
+  const status=document.getElementById('status');
+  document.getElementById('close').addEventListener('click',()=>liff.closeWindow());
+  try{
+    await liff.init({liffId:${JSON.stringify(liffId)}});
+    const context=liff.getContext();
+    status.textContent=context?.viewType==='tall'?'已進入 TALL 視窗，正在載入官網…':'正在載入官網…';
+    window.location.replace(${JSON.stringify(targetUrl)});
+  }catch(error){status.textContent='自動開啟失敗，請按「立即開啟」。';}
 })();
 </script>
 </body>

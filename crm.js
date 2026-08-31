@@ -35,18 +35,18 @@ export const DEFAULT_RICH_MENU = Object.freeze({
 });
 
 export const CARE_RICH_MENU = Object.freeze({
-  name: "Joson 照護知識雙頁選單 v6",
+  name: "Joson 照護知識雙頁選單 v7",
   chatBarText: "Joson 照護知識",
   selected: false,
   size: { width: 2500, height: 1686 },
   areas: [
     richMenuSwitchArea(0, 0, 1250, 240, "切換智慧服務", "joson-care-main", "joson-care-main-v3"),
-    richMenuUriArea(0, 240, 960, 1446, "照護知識專區", "https://www.joson-care.com/article.php?lang=tw&tb=9&cid=17"),
-    richMenuUriArea(965, 245, 485, 465, "防跌與居家安全", "https://www.joson-care.com/article_d.php?id=542&lang=tw&tb=4"),
-    richMenuUriArea(1470, 245, 485, 465, "中風與長期臥床", "https://www.joson-care.com/article_d.php?id=465&lang=tw&tb=4"),
-    richMenuUriArea(1980, 245, 485, 465, "失智症居家照護", "https://www.joson-care.com/article_d.php?id=455&lang=tw&tb=4"),
-    richMenuUriArea(965, 735, 1500, 540, "照護床操作與保養", "https://www.joson-care.com/article_d.php?id=303&lang=tw&tb=4"),
-    richMenuUriArea(965, 1275, 1500, 411, "長照輔具與醫療床補助", "https://www.joson-care.com/article_d.php?id=313&lang=tw&tb=4"),
+    richMenuUriArea(0, 240, 960, 1446, "照護知識專區", "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=overview"),
+    richMenuUriArea(965, 245, 485, 465, "防跌與居家安全", "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=fall"),
+    richMenuUriArea(1470, 245, 485, 465, "中風與長期臥床", "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=stroke"),
+    richMenuUriArea(1980, 245, 485, 465, "失智症居家照護", "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=dementia"),
+    richMenuUriArea(965, 735, 1500, 540, "照護床操作與保養", "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=maintenance"),
+    richMenuUriArea(965, 1275, 1500, 411, "長照輔具與醫療床補助", "https://liff.line.me/2011335134-ccbJ33yx/knowledge?topic=subsidy"),
   ],
 });
 
