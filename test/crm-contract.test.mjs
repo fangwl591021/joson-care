@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import { CARE_RICH_MENU, DEFAULT_RICH_MENU, monitorPriorityForIntent, postbackToText, validateRichMenuDefinition } from "../crm.js";
-import { classifyYoutubeVideo } from "../worker.js";
+import { classifyYoutubeVideo, generateGeminiReply, routeTextMessage } from "../worker.js";
 
 test("two-page Rich Menu uses top tabs and valid actions", () => {
   assert.deepEqual(DEFAULT_RICH_MENU.size, { width: 2500, height: 1686 });
@@ -148,12 +148,62 @@ test("chat monitor prioritizes actionable CRM intents", () => {
   assert.equal(monitorPriorityForIntent("general_message"), 0);
 });
 
+test("Gemini handles free-form LINE questions with grounded local context", async () => {
+  let capturedUrl = "";
+  let capturedRequest;
+  const fetchImpl = async (url, request) => {
+    capturedUrl = String(url);
+    capturedRequest = request;
+    return Response.json({ candidates: [{ content: { parts: [{ text: "建議先確認移位能力與房間空間，再由專人評估合適床型。" }] } }] });
+  };
+  const routed = await routeTextMessage("爸爸最近翻身不方便，該怎麼挑照護床？", {
+    GEMINI_API_KEY: "test-only-key",
+    GEMINI_MODEL: "gemini-3.5-flash-lite",
+  }, fetchImpl);
+  assert.equal(routed.meta.analysisMode, "external_ai");
+  assert.equal(routed.meta.model, "gemini-3.5-flash-lite");
+  assert.equal(routed.messages[0].type, "text");
+  assert.match(routed.messages[0].text, /確認移位能力/);
+  assert.match(capturedUrl, /gemini-3\.5-flash-lite:generateContent$/);
+  assert.equal(capturedRequest.headers["x-goog-api-key"], "test-only-key");
+  const body = JSON.parse(capturedRequest.body);
+  assert.match(body.contents[0].parts[0].text, /Joson-Care/);
+  assert.match(body.contents[0].parts[0].text, /照護知識/);
+  assert.match(body.contents[0].parts[0].text, /products\//);
+});
+
+test("Gemini integration preserves fast rules and safe fallback", async () => {
+  let called = false;
+  const fast = await routeTextMessage("床面希望較低", { GEMINI_API_KEY: "test-only-key" }, async () => {
+    called = true;
+    throw new Error("must not call Gemini");
+  });
+  assert.equal(called, false);
+  assert.equal(fast.meta.analysisMode, "rule_based");
+  assert.equal(fast.messages[0].type, "flex");
+
+  const fallback = await routeTextMessage("想了解更多照護方式", { GEMINI_API_KEY: "test-only-key" }, async () => {
+    throw new Error("timeout");
+  });
+  assert.equal(fallback.meta.analysisMode, "rule_based");
+  assert.equal(fallback.messages[0].type, "text");
+  assert.match(fallback.messages[0].text, /智慧照護顧問第一版/);
+});
+
+test("Gemini response parsing is bounded to a LINE-safe text reply", async () => {
+  const longText = "照".repeat(2500);
+  const text = await generateGeminiReply("請協助", { GEMINI_API_KEY: "test-only-key" }, async () =>
+    Response.json({ candidates: [{ content: { parts: [{ text: longText }] } }] })
+  );
+  assert.equal(text.length, 1800);
+});
+
 test("admin includes protected AI chat monitoring routes", () => {
   const source = fs.readFileSync(new URL("../crm.js", import.meta.url), "utf8");
   assert.match(source, /\/admin\/chat-monitor/);
   assert.match(source, /\/api\/admin\/chat\/threads/);
   assert.match(source, /\/api\/admin\/chat\/insights/);
-  assert.match(source, /規則引擎即時判讀/);
+  assert.match(source, /Gemini AI 回覆＋規則備援/);
   for (const route of ["/admin/crm", "/admin/products", "/admin/rich-menu", "/admin/settings"]) {
     assert.match(source, new RegExp(route.replaceAll("/", "\\/")));
   }

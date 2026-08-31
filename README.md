@@ -26,10 +26,13 @@ npx wrangler secret put LINE_CHANNEL_SECRET
 npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
 npx wrangler secret put LINE_LOGIN_CHANNEL_SECRET
 npx wrangler secret put ADMIN_ACCESS_KEY
+npx wrangler secret put GEMINI_API_KEY
 ```
 
 `LINE_CHANNEL_SECRET` and `LINE_CHANNEL_ACCESS_TOKEN` belong to the Messaging API channel.
 `LINE_LOGIN_CHANNEL_SECRET` belongs to LINE Login channel `2011335134`.
+
+Free-form LINE messages use Gemini `gemini-3.5-flash-lite` with relevant local product and care-knowledge context. Deterministic Rich Menu commands remain on the fast rule path, and Gemini timeout/API failures fall back to the original rule response. `GEMINI_API_KEY` must remain a Worker Secret; never place it in `wrangler.toml`, source code, browser code or chat logs.
 
 ## First version routes
 

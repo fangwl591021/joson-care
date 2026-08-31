@@ -95,7 +95,7 @@ export function postbackToText(data) {
   return actions[params.get("action")] || "AI選床";
 }
 
-export async function recordLineInteraction(env, event, inputText, replyMessages) {
+export async function recordLineInteraction(env, event, inputText, replyMessages, replyMeta = {}) {
   if (!env.CRM_DB) return;
   const lineUserId = String(event?.source?.userId || "").trim();
   if (!lineUserId) return;
@@ -109,10 +109,14 @@ export async function recordLineInteraction(env, event, inputText, replyMessages
   const friendStatus = event.type === "unfollow" ? "blocked" : "active";
   const preview = String(inputText || event.type || "互動").slice(0, 160);
   const source = event.type === "postback" ? "rich_menu" : "line";
+  const analysisMode = replyMeta?.analysisMode === "external_ai" ? "external_ai" : "rule_based";
+  const aiModel = String(replyMeta?.model || "").slice(0, 120) || null;
   const metadata = JSON.stringify({
     sourceType: event?.source?.type || null,
     messageType: event?.message?.type || null,
     deliveryContext: event?.deliveryContext?.isRedelivery ? "redelivery" : "initial",
+    analysisMode,
+    aiModel,
   });
 
   await env.CRM_DB.prepare(`INSERT INTO crm_contacts
@@ -154,13 +158,14 @@ export async function recordLineInteraction(env, event, inputText, replyMessages
       .bind(threadId, contactId, inputText ? 1 : 0, preview, occurredAt, now, now),
     env.CRM_DB.prepare(`INSERT INTO crm_thread_monitor_state
       (thread_id, priority, last_intent, last_product_model, analysis_mode, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'rule_based', ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(thread_id) DO UPDATE SET
         priority = MAX(crm_thread_monitor_state.priority, excluded.priority),
         last_intent = COALESCE(excluded.last_intent, crm_thread_monitor_state.last_intent),
         last_product_model = COALESCE(excluded.last_product_model, crm_thread_monitor_state.last_product_model),
+        analysis_mode = excluded.analysis_mode,
         updated_at = excluded.updated_at`)
-      .bind(threadId, monitorPriorityForIntent(classification.intent), classification.intent || null, classification.productModel || null, now, now),
+      .bind(threadId, monitorPriorityForIntent(classification.intent), classification.intent || null, classification.productModel || null, analysisMode, now, now),
   ];
 
   if (inputText) {
@@ -178,7 +183,7 @@ export async function recordLineInteraction(env, event, inputText, replyMessages
       env.CRM_DB.prepare(`INSERT OR IGNORE INTO crm_messages
         (id, thread_id, contact_id, direction, message_type, text_content, payload_summary, sent_at, created_at)
         VALUES (?, ?, ?, 'outbound', 'reply', ?, ?, ?, ?)`)
-        .bind(`msg_out_${(await sha256Hex(eventKey)).slice(0, 24)}`, threadId, contactId, replySummary.slice(0, 2000), JSON.stringify({ count: replyMessages.length }), now, now)
+        .bind(`msg_out_${(await sha256Hex(eventKey)).slice(0, 24)}`, threadId, contactId, replySummary.slice(0, 2000), JSON.stringify({ count: replyMessages.length, analysisMode, aiModel }), now, now)
     );
   }
 
@@ -310,7 +315,7 @@ export async function handleAdminRequest(request, env, url) {
   if (path === "/admin/settings" && request.method === "GET") return adminHtml(renderAdminSettingsPage());
   if (path === "/api/admin/summary" && request.method === "GET") return getAdminSummary(env.CRM_DB);
   if (path === "/api/admin/contacts" && request.method === "GET") return getAdminContacts(env.CRM_DB, url);
-  if (path === "/api/admin/chat/insights" && request.method === "GET") return getChatInsights(env.CRM_DB);
+  if (path === "/api/admin/chat/insights" && request.method === "GET") return getChatInsights(env);
   if (path === "/api/admin/chat/threads" && request.method === "GET") return getChatThreads(env.CRM_DB, url);
   if (path === "/api/admin/system/status" && request.method === "GET") return getAdminSystemStatus(env, url);
   if (chatReadMatch && request.method === "POST") return markChatThreadRead(env.CRM_DB, decodeURIComponent(chatReadMatch[1]));
@@ -1228,7 +1233,11 @@ async function getAdminSystemStatus(env, url) {
       liffId: String(env.LIFF_ID || ""),
     },
     admin: { accessKey: Boolean(env.ADMIN_ACCESS_KEY) },
-    ai: { mode: "rule_based", externalModel: false },
+    ai: {
+      mode: env.GEMINI_API_KEY ? "gemini" : "rule_based",
+      externalModel: Boolean(env.GEMINI_API_KEY),
+      model: env.GEMINI_API_KEY ? String(env.GEMINI_MODEL || "gemini-3.5-flash-lite") : null,
+    },
     routes: {
       webhook: `${url.origin}/line-webhook`,
       callback: `${url.origin}/callback`,
@@ -1239,7 +1248,8 @@ async function getAdminSystemStatus(env, url) {
   });
 }
 
-async function getChatInsights(db) {
+async function getChatInsights(env) {
+  const db = env.CRM_DB;
   const results = await db.batch([
     db.prepare("SELECT COUNT(*) AS count FROM crm_threads WHERE unread_count > 0"),
     db.prepare("SELECT COUNT(*) AS count FROM crm_thread_monitor_state WHERE priority >= 2"),
@@ -1260,7 +1270,7 @@ async function getChatInsights(db) {
     inbound7d: numberFromResult(results[3]),
     topIntents: results[4].results || [],
     topProducts: results[5].results || [],
-    analysisMode: "rule_based",
+    analysisMode: env.GEMINI_API_KEY ? "gemini_with_rule_fallback" : "rule_based",
   });
 }
 
@@ -1527,7 +1537,7 @@ function renderAdminPage() {
 }
 
 function renderChatMonitorPage() {
-  const content = `<style>.monitor-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}.monitor-grid{display:grid;grid-template-columns:370px minmax(0,1fr);gap:16px;min-height:650px}.monitor-list,.conversation{padding:0;overflow:hidden}.monitor-toolbar{padding:16px;border-bottom:1px solid #e2ebe8}.filters{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.filters input{grid-column:1/-1}.filters select,.thread-controls select,.thread-controls input,textarea{width:100%;padding:10px;border:1px solid #bfd1cc;border-radius:9px;background:#fff;font:inherit}.thread-list{max-height:610px;overflow:auto}.thread-card{display:block;width:100%;padding:14px 16px;border:0;border-bottom:1px solid #e7eeec;border-radius:0;background:#fff;color:#17332e;text-align:left}.thread-card:hover,.thread-card.active{background:#eaf4f1}.thread-top{display:flex;justify-content:space-between;gap:10px}.thread-name{font-weight:850}.thread-meta,.thread-preview{font-size:12px;color:#667d76}.thread-preview{margin:7px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.chips{display:flex;flex-wrap:wrap;gap:5px}.chip{padding:3px 7px;border-radius:999px;background:#e5efec;color:#175b49;font-size:11px}.chip.p3{background:#fee2e2;color:#9b1c1c}.chip.p2{background:#fff0d5;color:#8a4b08}.unread{padding:2px 7px;border-radius:99px;background:#c53030;color:#fff;font-size:12px}.conversation-empty{display:grid;place-items:center;min-height:620px;color:#657a74;text-align:center;padding:30px}.conversation-head{padding:17px 20px;border-bottom:1px solid #e2ebe8}.conversation-title{display:flex;justify-content:space-between;gap:12px}.analysis{margin-top:12px;padding:12px;border-radius:11px;background:#edf5f2}.analysis strong{display:block}.thread-controls{display:grid;grid-template-columns:1fr 1fr 1.2fr auto;gap:8px;margin-top:12px}.timeline{height:390px;overflow:auto;padding:18px;background:#f7faf9}.message{display:flex;margin:8px 0}.message.outbound{justify-content:flex-end}.bubble{max-width:76%;padding:10px 12px;border-radius:14px;background:#fff;border:1px solid #dde8e4;white-space:pre-wrap}.outbound .bubble{background:#dff1ea}.bubble time{display:block;margin-top:5px;color:#71847e;font-size:10px}.conversation-foot{display:grid;grid-template-columns:1fr auto;gap:8px;padding:15px 20px}.conversation-foot textarea{min-height:68px}.notes{padding:0 20px 18px}.note{padding:9px 0;border-bottom:1px solid #e7eeec;font-size:13px}@media(max-width:1050px){.monitor-grid{grid-template-columns:1fr}.thread-list{max-height:330px}.conversation-empty{min-height:300px}}@media(max-width:600px){.filters,.thread-controls{grid-template-columns:1fr}.filters input{grid-column:auto}.monitor-stats{grid-template-columns:1fr 1fr}.conversation-foot{grid-template-columns:1fr}}</style><div class="info-strip"><span class="online-dot"></span><b>規則引擎即時判讀</b><span>不使用外部 AI 額度，15 秒更新</span></div><section class="monitor-stats" id="monitor-stats"><div class="stat">載入中…</div></section><section class="monitor-grid"><aside class="panel monitor-list"><div class="monitor-toolbar"><div class="section-title"><h2>LINE 對話</h2><button class="secondary" id="refresh-button">更新</button></div><div class="filters"><input id="search" placeholder="搜尋姓名、訊息或型號"><select id="unread-filter"><option value="">全部訊息</option><option value="1">只看未讀</option></select><select id="priority-filter"><option value="">全部優先級</option><option value="3">緊急</option><option value="2">高</option><option value="1">一般追蹤</option><option value="0">低</option></select><select id="stage-filter"><option value="">全部階段</option><option value="new">新會員</option><option value="selecting">選型中</option><option value="lead">商機</option><option value="customer">客戶</option><option value="after_sales">售後</option></select><select id="status-filter"><option value="">全部狀態</option><option value="open">處理中</option><option value="pending">待追蹤</option><option value="closed">已結案</option></select></div></div><div class="thread-list" id="thread-list"><div class="conversation-empty">正在讀取對話…</div></div></aside><section class="panel conversation" id="conversation"><div class="conversation-empty"><div><h2>選擇一則對話</h2><p>查看完整訊息、智能判讀與 CRM 備註。</p></div></div></section></section>`;
+  const content = `<style>.monitor-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}.monitor-grid{display:grid;grid-template-columns:370px minmax(0,1fr);gap:16px;min-height:650px}.monitor-list,.conversation{padding:0;overflow:hidden}.monitor-toolbar{padding:16px;border-bottom:1px solid #e2ebe8}.filters{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.filters input{grid-column:1/-1}.filters select,.thread-controls select,.thread-controls input,textarea{width:100%;padding:10px;border:1px solid #bfd1cc;border-radius:9px;background:#fff;font:inherit}.thread-list{max-height:610px;overflow:auto}.thread-card{display:block;width:100%;padding:14px 16px;border:0;border-bottom:1px solid #e7eeec;border-radius:0;background:#fff;color:#17332e;text-align:left}.thread-card:hover,.thread-card.active{background:#eaf4f1}.thread-top{display:flex;justify-content:space-between;gap:10px}.thread-name{font-weight:850}.thread-meta,.thread-preview{font-size:12px;color:#667d76}.thread-preview{margin:7px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.chips{display:flex;flex-wrap:wrap;gap:5px}.chip{padding:3px 7px;border-radius:999px;background:#e5efec;color:#175b49;font-size:11px}.chip.p3{background:#fee2e2;color:#9b1c1c}.chip.p2{background:#fff0d5;color:#8a4b08}.unread{padding:2px 7px;border-radius:99px;background:#c53030;color:#fff;font-size:12px}.conversation-empty{display:grid;place-items:center;min-height:620px;color:#657a74;text-align:center;padding:30px}.conversation-head{padding:17px 20px;border-bottom:1px solid #e2ebe8}.conversation-title{display:flex;justify-content:space-between;gap:12px}.analysis{margin-top:12px;padding:12px;border-radius:11px;background:#edf5f2}.analysis strong{display:block}.thread-controls{display:grid;grid-template-columns:1fr 1fr 1.2fr auto;gap:8px;margin-top:12px}.timeline{height:390px;overflow:auto;padding:18px;background:#f7faf9}.message{display:flex;margin:8px 0}.message.outbound{justify-content:flex-end}.bubble{max-width:76%;padding:10px 12px;border-radius:14px;background:#fff;border:1px solid #dde8e4;white-space:pre-wrap}.outbound .bubble{background:#dff1ea}.bubble time{display:block;margin-top:5px;color:#71847e;font-size:10px}.conversation-foot{display:grid;grid-template-columns:1fr auto;gap:8px;padding:15px 20px}.conversation-foot textarea{min-height:68px}.notes{padding:0 20px 18px}.note{padding:9px 0;border-bottom:1px solid #e7eeec;font-size:13px}@media(max-width:1050px){.monitor-grid{grid-template-columns:1fr}.thread-list{max-height:330px}.conversation-empty{min-height:300px}}@media(max-width:600px){.filters,.thread-controls{grid-template-columns:1fr}.filters input{grid-column:auto}.monitor-stats{grid-template-columns:1fr 1fr}.conversation-foot{grid-template-columns:1fr}}</style><div class="info-strip"><span class="online-dot"></span><b>Gemini AI 回覆＋規則備援</b><span>外部 AI 逾時時自動切回快速規則，15 秒更新</span></div><section class="monitor-stats" id="monitor-stats"><div class="stat">載入中…</div></section><section class="monitor-grid"><aside class="panel monitor-list"><div class="monitor-toolbar"><div class="section-title"><h2>LINE 對話</h2><button class="secondary" id="refresh-button">更新</button></div><div class="filters"><input id="search" placeholder="搜尋姓名、訊息或型號"><select id="unread-filter"><option value="">全部訊息</option><option value="1">只看未讀</option></select><select id="priority-filter"><option value="">全部優先級</option><option value="3">緊急</option><option value="2">高</option><option value="1">一般追蹤</option><option value="0">低</option></select><select id="stage-filter"><option value="">全部階段</option><option value="new">新會員</option><option value="selecting">選型中</option><option value="lead">商機</option><option value="customer">客戶</option><option value="after_sales">售後</option></select><select id="status-filter"><option value="">全部狀態</option><option value="open">處理中</option><option value="pending">待追蹤</option><option value="closed">已結案</option></select></div></div><div class="thread-list" id="thread-list"><div class="conversation-empty">正在讀取對話…</div></div></aside><section class="panel conversation" id="conversation"><div class="conversation-empty"><div><h2>選擇一則對話</h2><p>查看完整訊息、智能判讀與 CRM 備註。</p></div></div></section></section>`;
   const script = `${commonAdminScript()}const labels={contact_request:'要求聯絡',procurement:'機構採購',after_sales:'售後服務',low_bed:'低床需求',space_saving:'空間收納',four_rail:'四片護欄',professional_controls:'完整操作',start_advisor:'開始選床',compare_products:'床型比較',browse_products:'瀏覽產品',general_message:'一般訊息',line_event:'LINE 事件'};const priorities=['低','一般追蹤','高','緊急'];let selectedId='';let searchTimer;async function loadInsights(){const d=await api('/api/admin/chat/insights');document.getElementById('monitor-stats').innerHTML=[['未讀',d.unreadThreads],['高優先',d.highPriority],['處理中',d.activeThreads],['7 日訊息',d.inbound7d]].map(x=>'<div class="stat"><strong>'+e(x[1])+'</strong><small>'+e(x[0])+'</small></div>').join('')}function query(){const p=new URLSearchParams({limit:'60'});[['q','search'],['unread','unread-filter'],['priority','priority-filter'],['stage','stage-filter'],['status','status-filter']].forEach(x=>{const v=document.getElementById(x[1]).value.trim();if(v)p.set(x[0],v)});return p}async function loadThreads(){const d=await api('/api/admin/chat/threads?'+query());const box=document.getElementById('thread-list');box.innerHTML=d.threads.length?d.threads.map(t=>'<button class="thread-card '+(t.id===selectedId?'active':'')+'" data-id="'+e(t.id)+'"><div class="thread-top"><span class="thread-name">'+e(t.display_name||'LINE 會員')+'</span>'+(t.unread_count?'<span class="unread">'+e(t.unread_count)+'</span>':'')+'</div><div class="thread-preview">'+e(t.last_message_preview||'尚無文字訊息')+'</div><div class="chips"><span class="chip p'+e(t.priority)+'">'+e(priorities[t.priority]||'低')+'</span><span class="chip">'+e(labels[t.last_intent]||t.last_intent||'未分類')+'</span>'+(t.last_product_model?'<span class="chip">'+e(t.last_product_model)+'</span>':'')+'</div><div class="thread-meta">'+e(fmt(t.last_message_at))+' · '+e(t.lifecycle_stage)+'</div></button>').join(''):'<div class="conversation-empty">沒有符合條件的對話</div>';box.querySelectorAll('[data-id]').forEach(b=>b.addEventListener('click',()=>openThread(b.dataset.id)))}async function openThread(id){selectedId=id;await Promise.all([loadThread(),loadThreads()])}async function loadThread(){if(!selectedId)return;const d=await api('/api/admin/chat/threads/'+encodeURIComponent(selectedId));const t=d.thread;const messages=d.messages.map(m=>'<div class="message '+e(m.direction)+'"><div class="bubble">'+e(m.text_content||m.payload_summary||m.message_type)+'<time>'+e(m.direction==='inbound'?'會員':'系統回覆')+' · '+e(fmt(m.sent_at))+'</time></div></div>').join('');const notes=d.notes.map(n=>'<div class="note">'+e(n.note)+'<div class="thread-meta">'+e(fmt(n.created_at))+'</div></div>').join('')||'<div class="note muted">尚無備註</div>';document.getElementById('conversation').innerHTML='<div class="conversation-head"><div class="conversation-title"><div><div class="eyebrow">'+e(t.lifecycle_stage)+' · '+e(t.tags||'無標籤')+'</div><h2>'+e(t.display_name||'LINE 會員')+'</h2><div class="thread-meta">最後互動 '+e(fmt(t.last_message_at))+'</div></div>'+(t.unread_count?'<button id="read-button">標為已讀 ('+e(t.unread_count)+')</button>':'<span class="chip">已讀</span>')+'</div><div class="analysis"><strong>智能判讀：'+e(labels[t.last_intent]||t.last_intent||'未分類')+(t.last_product_model?' · 推薦 '+e(t.last_product_model):'')+'</strong><span>'+e(d.recommendation)+'</span></div><div class="thread-controls"><select id="edit-status"><option value="open">處理中</option><option value="pending">待追蹤</option><option value="closed">已結案</option></select><select id="edit-priority"><option value="0">低</option><option value="1">一般</option><option value="2">高</option><option value="3">緊急</option></select><input id="edit-assignee" placeholder="負責人" value="'+e(t.assigned_to||'')+'"><button id="save-button">儲存</button></div></div><div class="timeline" id="timeline">'+messages+'</div><div class="conversation-foot"><textarea id="note-text" placeholder="新增內部備註，不會傳給會員"></textarea><button id="note-button">加入備註</button></div><div class="notes"><details><summary>CRM 備註 ('+e(d.notes.length)+')</summary>'+notes+'</details></div>';document.getElementById('edit-status').value=t.status;document.getElementById('edit-priority').value=String(t.priority);const timeline=document.getElementById('timeline');timeline.scrollTop=timeline.scrollHeight;document.getElementById('read-button')?.addEventListener('click',markRead);document.getElementById('save-button').addEventListener('click',saveThread);document.getElementById('note-button').addEventListener('click',addNote)}async function markRead(){await api('/api/admin/chat/threads/'+encodeURIComponent(selectedId)+'/read',{method:'POST'});await refreshAll()}async function saveThread(){await api('/api/admin/chat/threads/'+encodeURIComponent(selectedId),{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({status:document.getElementById('edit-status').value,priority:Number(document.getElementById('edit-priority').value),assignedTo:document.getElementById('edit-assignee').value})});await refreshAll()}async function addNote(){const i=document.getElementById('note-text');if(!i.value.trim())return;await api('/api/admin/chat/threads/'+encodeURIComponent(selectedId)+'/notes',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({note:i.value.trim()})});i.value='';await loadThread()}async function refreshAll(){await Promise.all([loadInsights(),loadThreads(),selectedId?loadThread():Promise.resolve()])}document.getElementById('refresh-button').addEventListener('click',refreshAll);['unread-filter','priority-filter','stage-filter','status-filter'].forEach(id=>document.getElementById(id).addEventListener('change',loadThreads));document.getElementById('search').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(loadThreads,250)});refreshAll();setInterval(()=>{if(!document.hidden)Promise.all([loadInsights(),loadThreads()])},15000);`;
   return adminPage("crm", "CRM 與 AI 聊天室", "管理 LINE 對話、智能需求判讀、商機優先級與內部追蹤。", content, script);
 }
