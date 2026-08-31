@@ -61,7 +61,7 @@ export default {
     if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
 
     try {
-      if (path === "/health") return json({ ok: true, service: "joson-care", version: "1.5.0", products: PRODUCTS.length, careArticles: CARE_ARTICLES.length, crm: Boolean(env.CRM_DB), videos: true, sharing: true });
+      if (path === "/health") return json({ ok: true, service: "joson-care", version: "1.5.1", products: PRODUCTS.length, careArticles: CARE_ARTICLES.length, crm: Boolean(env.CRM_DB), videos: true, sharing: true });
       if (path === "/admin" || path.startsWith("/admin/") || path.startsWith("/api/admin/")) return handleAdminRequest(request, env, url);
       if (path === "/line-webhook") return handleLineWebhook(request, env, ctx);
       if (request.method === "GET" && path === "/liff/videos") return serveLiffVideosPage(env, url);

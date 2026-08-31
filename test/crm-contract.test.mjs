@@ -65,6 +65,17 @@ test("knowledge menu hotspots follow the visible three-column mobile layout", ()
   assert.deepEqual(CARE_RICH_MENU.areas[6].bounds, { x: 965, y: 1275, width: 1500, height: 411 });
 });
 
+test("knowledge menu opens full official website articles", () => {
+  assert.deepEqual(CARE_RICH_MENU.areas.slice(1).map((area) => area.action.uri), [
+    "https://www.joson-care.com/article.php?lang=tw&tb=9&cid=17",
+    "https://www.joson-care.com/article_d.php?id=542&lang=tw&tb=4",
+    "https://www.joson-care.com/article_d.php?id=465&lang=tw&tb=4",
+    "https://www.joson-care.com/article_d.php?id=455&lang=tw&tb=4",
+    "https://www.joson-care.com/article_d.php?id=303&lang=tw&tb=4",
+    "https://www.joson-care.com/article_d.php?id=313&lang=tw&tb=4",
+  ]);
+});
+
 test("YouTube Rich Menu action opens a LIFF video channel with embedded playback", () => {
   const worker = fs.readFileSync(new URL("../worker.js", import.meta.url), "utf8");
   const page = fs.readFileSync(new URL("../public/liff-videos.html", import.meta.url), "utf8");
